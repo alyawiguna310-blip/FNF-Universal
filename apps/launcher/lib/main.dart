@@ -794,3 +794,4 @@ class _Notice extends StatelessWidget {
           ],
         ),
       );
+}
