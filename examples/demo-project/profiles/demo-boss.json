@@ -1,0 +1,7 @@
+{
+  "id":"demo-boss","health":1000,"healthDrainOnMiss":10,
+  "phases":[
+    {"id":"intro","trigger":"song-time","threshold":30,"attackScript":"boss","animation":"prepare","durationSeconds":3},
+    {"id":"enraged","trigger":"health-threshold","threshold":0.35,"attackScript":"boss","animation":"enraged","durationSeconds":0}
+  ]
+}
