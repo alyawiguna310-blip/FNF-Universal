@@ -144,7 +144,6 @@ fn write_bytes(bytes: &[u8], output_ptr: *mut u8, output_capacity: usize) -> isi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::c_void;
 
     fn call_buffered(
         function: unsafe extern "C" fn(*const u8, usize, *mut u8, usize) -> isize,
