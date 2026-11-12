@@ -35,6 +35,7 @@ void main() {
       final stage = (document['stages'] as List).single as Map;
       final objects = stage['objects'] as List;
       expect((objects[1] as Map)['visible'], false);
+      expect((objects[1] as Map)['name'], 'Opponent');
     });
 
     test('round-trips canonical documents to editor state', () {
@@ -59,6 +60,7 @@ void main() {
         {'lane': 1, 'step': 4},
       ]);
       expect((state['character'] as Map)['description'], 'Playable character');
+      expect((state['stage'] as Map)['objects'], ['Background']);
     });
 
     test('migrates the original editor prototype format', () {
