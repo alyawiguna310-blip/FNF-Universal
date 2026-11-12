@@ -71,6 +71,7 @@ class ProjectDocumentCodec {
             final objectName = entry.value;
             return {
               'id': '${_id(objectName, fallback: 'object')}-${entry.key + 1}',
+              'name': objectName,
               'visible': layers[objectName] ?? true,
               'x': 0.0,
               'y': 0.0,
@@ -164,9 +165,9 @@ class ProjectDocumentCodec {
     final stageLayers = <String, bool>{};
     for (final rawObject in _asList(stage['objects'])) {
       final object = _asMap(rawObject);
-      final id = object['id']?.toString() ?? 'object-${stageObjects.length + 1}';
-      stageObjects.add(id);
-      stageLayers[id] = object['visible'] is bool ? object['visible'] as bool : true;
+      final name = object['name']?.toString() ?? object['id']?.toString() ?? 'Object ${stageObjects.length + 1}';
+      stageObjects.add(name);
+      stageLayers[name] = object['visible'] is bool ? object['visible'] as bool : true;
     }
 
     return {
