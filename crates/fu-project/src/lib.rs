@@ -258,6 +258,8 @@ pub struct StageDefinition {
 #[serde(rename_all = "camelCase")]
 pub struct StageObject {
     pub id: String,
+    #[serde(default)]
+    pub name: String,
     pub visible: bool,
     #[serde(default)]
     pub x: f32,
