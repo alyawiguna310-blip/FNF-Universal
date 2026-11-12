@@ -19,9 +19,56 @@ class FnfUniversalApp extends StatelessWidget {
       title: 'FNF Universal',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        brightness: Brightness.dark,
-        colorSchemeSeed: const Color(0xFFB66CFF),
         useMaterial3: true,
+        brightness: Brightness.dark,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFFFF4FCB),
+          brightness: Brightness.dark,
+        ).copyWith(
+          primary: const Color(0xFFFF4FCB),
+          secondary: const Color(0xFF55E6D0),
+          tertiary: const Color(0xFFC5F36A),
+          surface: const Color(0xFF171722),
+        ),
+        scaffoldBackgroundColor: const Color(0xFF101018),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFF101018),
+          foregroundColor: Color(0xFFF7F4FF),
+          elevation: 0,
+          titleTextStyle: TextStyle(
+            color: Color(0xFFF7F4FF),
+            fontSize: 18,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1.2,
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: const Color(0xFF20202D),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFF39394A)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFF39394A)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFFFF4FCB), width: 2),
+          ),
+        ),
+        navigationBarTheme: const NavigationBarThemeData(
+          backgroundColor: Color(0xFF171722),
+          indicatorColor: Color(0xFF49304A),
+          labelTextStyle: WidgetStatePropertyAll(
+            TextStyle(fontWeight: FontWeight.w800, fontSize: 11),
+          ),
+        ),
+        snackBarTheme: const SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Color(0xFF292938),
+        ),
       ),
       home: const EditorShell(),
     );
@@ -243,6 +290,29 @@ class _EditorShellState extends State<EditorShell> {
         layers: _layers,
       );
 
+  Future<void> _showAbout() async {
+    await showAboutDialog(
+      context: context,
+      applicationName: 'FNF Universal',
+      applicationVersion: '0.1.0',
+      applicationLegalese:
+          'An independent community project. Not affiliated with or endorsed by the creators of Friday Night Funkin\'.',
+      children: const [
+        SizedBox(height: 12),
+        Text(
+          'Visual direction takes inspiration from Friday Night Funkin\'. '
+          'This UI pass uses original Flutter widgets and does not bundle '
+          'third-party launcher code, game artwork, music, or character assets.',
+        ),
+        SizedBox(height: 12),
+        Text(
+          'Open-source credits and license notices are documented in '
+          'docs/OPEN_SOURCE_CREDITS.md.',
+        ),
+      ],
+    );
+  }
+
   Future<void> _showExport() async {
     try {
       final pretty = NativeProjectBridge.open().normalizeProject(jsonEncode(_projectData()));
@@ -314,8 +384,20 @@ class _EditorShellState extends State<EditorShell> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('FNF Universal Studio'),
+        title: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.graphic_eq, color: Color(0xFFFF4FCB), size: 23),
+            SizedBox(width: 9),
+            Text('FNF UNIVERSAL'),
+          ],
+        ),
         actions: [
+          IconButton(
+            tooltip: 'About and credits',
+            onPressed: _showAbout,
+            icon: const Icon(Icons.info_outline),
+          ),
           IconButton(
             tooltip: 'Load saved project',
             onPressed: _loadProject,
@@ -349,6 +431,90 @@ class _EditorShellState extends State<EditorShell> {
   }
 }
 
+
+class _StudioBanner extends StatelessWidget {
+  const _StudioBanner();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color(0xFF482448),
+              Color(0xFF24213C),
+              Color(0xFF173A3B),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFF8B548B), width: 1.2),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x44000000),
+              blurRadius: 18,
+              offset: Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Stack(
+          children: [
+            Positioned(
+              right: -2,
+              top: -12,
+              child: Icon(
+                Icons.graphic_eq,
+                size: 92,
+                color: Colors.white.withValues(alpha: 0.10),
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF4FCB),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Text(
+                    'MODDING WORKSHOP',
+                    style: TextStyle(
+                      color: Color(0xFF190F1B),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'MAKE SOME\nNOISE.',
+                  style: TextStyle(
+                    height: 0.96,
+                    fontSize: 34,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -1.1,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 9),
+                const Text(
+                  'Build songs, characters and stages in one place.',
+                  style: TextStyle(
+                    color: Color(0xFFE2DDEB),
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+}
+
 class _WorkshopPage extends StatelessWidget {
   const _WorkshopPage({
     required this.projectName,
@@ -368,6 +534,8 @@ class _WorkshopPage extends StatelessWidget {
   Widget build(BuildContext context) => ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          const _StudioBanner(),
+          const SizedBox(height: 18),
           _SectionCard(
             title: 'Mod project',
             subtitle: 'A single workspace for your song, characters, stages and assets.',
@@ -739,6 +907,12 @@ class _SectionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Card(
+        color: const Color(0xFF1B1B28),
+        elevation: 3,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: Color(0xFF343444)),
+        ),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -764,8 +938,18 @@ class _WorkspaceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Card(
+        color: const Color(0xFF1B1B28),
+        elevation: 2,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: const BorderSide(color: Color(0xFF343444)),
+        ),
         child: ListTile(
-          leading: CircleAvatar(child: Icon(icon)),
+          leading: CircleAvatar(
+            backgroundColor: const Color(0xFF35263A),
+            foregroundColor: const Color(0xFFFF78D8),
+            child: Icon(icon),
+          ),
           title: Text(title),
           subtitle: Text(subtitle),
           trailing: const Icon(Icons.chevron_right),
@@ -782,8 +966,9 @@ class _Notice extends StatelessWidget {
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(10),
+          color: const Color(0xFF252535),
+          border: Border.all(color: const Color(0xFF414154)),
+          borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
