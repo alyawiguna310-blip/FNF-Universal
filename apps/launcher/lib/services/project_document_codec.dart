@@ -10,6 +10,7 @@ class ProjectDocumentCodec {
     required double bpm,
     required Set<String> notes,
     required String characterName,
+    required String characterDescription,
     required List<String> animations,
     required String stageName,
     required List<String> stageObjects,
@@ -58,6 +59,7 @@ class ProjectDocumentCodec {
         {
           'id': _id(characterName, fallback: 'character'),
           'name': characterName.trim().isEmpty ? 'Character' : characterName.trim(),
+          'description': characterDescription,
           'animations': List<String>.from(animations),
         },
       ],
@@ -109,6 +111,7 @@ class ProjectDocumentCodec {
       bpm: (chart['bpm'] is num ? (chart['bpm'] as num).toDouble() : 120.0),
       notes: notes,
       characterName: character['name']?.toString() ?? 'character',
+      characterDescription: character['description']?.toString() ?? '',
       animations: _asList(character['animations']).map((value) => value.toString()).toList(),
       stageName: stage['name']?.toString() ?? 'stage',
       stageObjects: _asList(stage['objects']).map((value) => value.toString()).toList(),
@@ -175,7 +178,7 @@ class ProjectDocumentCodec {
       },
       'character': {
         'name': character['name']?.toString() ?? 'character',
-        'description': '',
+        'description': character['description']?.toString() ?? '',
         'animations': _asList(character['animations']).map((value) => value.toString()).toList(),
       },
       'stage': {
