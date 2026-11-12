@@ -40,15 +40,35 @@ pub enum EngineError {
 impl EngineManifest {
     pub fn validate(&self) -> Result<(), EngineError> {
         let id_ok = !self.id.is_empty()
-            && self.id.chars().all(|c| c.is_ascii_lowercase()
-                || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'));
-        if !id_ok { return Err(EngineError::Invalid("id must use lowercase ASCII, digits, '.', '_' or '-'".into())); }
-        if self.name.trim().is_empty() || self.version.trim().is_empty() || self.runtime.trim().is_empty() {
-            return Err(EngineError::Invalid("name, version and runtime are required".into()));
+            && self.id.chars().all(|c| {
+                c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-')
+            });
+        if !id_ok {
+            return Err(EngineError::Invalid(
+                "id must use lowercase ASCII, digits, '.', '_' or '-'".into(),
+            ));
         }
-        if self.platforms.is_empty() { return Err(EngineError::Invalid("at least one platform is required".into())); }
-        if self.platforms.iter().any(|p| !matches!(p.as_str(), "android" | "windows" | "linux")) {
-            return Err(EngineError::Invalid("platform must be android, windows or linux".into()));
+        if self.name.trim().is_empty()
+            || self.version.trim().is_empty()
+            || self.runtime.trim().is_empty()
+        {
+            return Err(EngineError::Invalid(
+                "name, version and runtime are required".into(),
+            ));
+        }
+        if self.platforms.is_empty() {
+            return Err(EngineError::Invalid(
+                "at least one platform is required".into(),
+            ));
+        }
+        if self
+            .platforms
+            .iter()
+            .any(|p| !matches!(p.as_str(), "android" | "windows" | "linux"))
+        {
+            return Err(EngineError::Invalid(
+                "platform must be android, windows or linux".into(),
+            ));
         }
         Ok(())
     }
@@ -74,10 +94,14 @@ impl EngineRegistry {
     }
 
     pub fn get(&self, id: &str) -> Result<&EngineManifest, EngineError> {
-        self.engines.get(id).ok_or_else(|| EngineError::NotFound(id.into()))
+        self.engines
+            .get(id)
+            .ok_or_else(|| EngineError::NotFound(id.into()))
     }
 
-    pub fn list(&self) -> Vec<&EngineManifest> { self.engines.values().collect() }
+    pub fn list(&self) -> Vec<&EngineManifest> {
+        self.engines.values().collect()
+    }
 }
 
 #[cfg(test)]
@@ -85,17 +109,31 @@ mod tests {
     use super::*;
     fn sample() -> EngineManifest {
         EngineManifest {
-            id: "vslice".into(), name: "V-Slice".into(), version: "0.1".into(),
-            runtime: "haxe".into(), platforms: vec!["android".into()],
+            id: "vslice".into(),
+            name: "V-Slice".into(),
+            version: "0.1".into(),
+            runtime: "haxe".into(),
+            platforms: vec!["android".into()],
             integration_status: IntegrationStatus::ManifestOnly,
-            capabilities: vec![], notes: None,
+            capabilities: vec![],
+            notes: None,
         }
     }
-    #[test] fn validates_manifest() { assert!(sample().validate().is_ok()); }
-    #[test] fn rejects_duplicate_ids() {
+    #[test]
+    fn validates_manifest() {
+        assert!(sample().validate().is_ok());
+    }
+    #[test]
+    fn rejects_duplicate_ids() {
         let mut r = EngineRegistry::default();
         r.register(sample()).unwrap();
-        assert!(matches!(r.register(sample()), Err(EngineError::Duplicate(_))));
+        assert!(matches!(
+            r.register(sample()),
+            Err(EngineError::Duplicate(_))
+        ));
     }
-    #[test] fn platform_check() { assert!(sample().supports("android")); }
+    #[test]
+    fn platform_check() {
+        assert!(sample().supports("android"));
+    }
 }

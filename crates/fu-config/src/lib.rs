@@ -9,7 +9,11 @@ pub struct AppConfig {
 }
 impl Default for AppConfig {
     fn default() -> Self {
-        Self { theme: "dark".into(), selected_engine: None, show_performance_overlay: false }
+        Self {
+            theme: "dark".into(),
+            selected_engine: None,
+            show_performance_overlay: false,
+        }
     }
 }
 pub fn parse_config(json: &str) -> Result<AppConfig, serde_json::Error> {
@@ -17,7 +21,8 @@ pub fn parse_config(json: &str) -> Result<AppConfig, serde_json::Error> {
 }
 #[cfg(test)]
 mod tests {
-    #[test] fn defaults_are_applied() {
+    #[test]
+    fn defaults_are_applied() {
         let c = super::parse_config("{}").unwrap();
         assert_eq!(c.theme, "dark");
     }

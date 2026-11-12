@@ -55,7 +55,10 @@ impl ProjectDocument {
         if self.format_version != PROJECT_FORMAT_VERSION {
             issues.push(ValidationIssue::new(
                 "formatVersion",
-                format!("unsupported version {}; expected {PROJECT_FORMAT_VERSION}", self.format_version),
+                format!(
+                    "unsupported version {}; expected {PROJECT_FORMAT_VERSION}",
+                    self.format_version
+                ),
             ));
         }
 
@@ -69,23 +72,40 @@ impl ProjectDocument {
             let base = format!("songs[{song_index}]");
             validate_unique_id(&song.id, &format!("{base}.id"), &mut song_ids, &mut issues);
             if song.title.trim().is_empty() {
-                issues.push(ValidationIssue::new(format!("{base}.title"), "must not be empty"));
+                issues.push(ValidationIssue::new(
+                    format!("{base}.title"),
+                    "must not be empty",
+                ));
             }
             if !song.bpm.is_finite() || song.bpm <= 0.0 {
-                issues.push(ValidationIssue::new(format!("{base}.bpm"), "must be a finite number greater than zero"));
+                issues.push(ValidationIssue::new(
+                    format!("{base}.bpm"),
+                    "must be a finite number greater than zero",
+                ));
             }
             if song.lane_count == 0 {
-                issues.push(ValidationIssue::new(format!("{base}.laneCount"), "must be at least one"));
+                issues.push(ValidationIssue::new(
+                    format!("{base}.laneCount"),
+                    "must be at least one",
+                ));
             }
 
             let mut note_ids = BTreeSet::new();
             for (note_index, note) in song.notes.iter().enumerate() {
                 let note_path = format!("{base}.notes[{note_index}]");
-                validate_unique_id(&note.id, &format!("{note_path}.id"), &mut note_ids, &mut issues);
+                validate_unique_id(
+                    &note.id,
+                    &format!("{note_path}.id"),
+                    &mut note_ids,
+                    &mut issues,
+                );
                 if note.gameplay.lane >= song.lane_count {
                     issues.push(ValidationIssue::new(
                         format!("{note_path}.gameplay.lane"),
-                        format!("lane {} is outside this song's {} lanes", note.gameplay.lane, song.lane_count),
+                        format!(
+                            "lane {} is outside this song's {} lanes",
+                            note.gameplay.lane, song.lane_count
+                        ),
                     ));
                 }
             }
@@ -96,7 +116,10 @@ impl ProjectDocument {
             let path = format!("characters[{index}].id");
             validate_unique_id(&character.id, &path, &mut character_ids, &mut issues);
             if character.name.trim().is_empty() {
-                issues.push(ValidationIssue::new(format!("characters[{index}].name"), "must not be empty"));
+                issues.push(ValidationIssue::new(
+                    format!("characters[{index}].name"),
+                    "must not be empty",
+                ));
             }
         }
 
@@ -105,29 +128,52 @@ impl ProjectDocument {
             let path = format!("stages[{index}].id");
             validate_unique_id(&stage.id, &path, &mut stage_ids, &mut issues);
             if stage.name.trim().is_empty() {
-                issues.push(ValidationIssue::new(format!("stages[{index}].name"), "must not be empty"));
+                issues.push(ValidationIssue::new(
+                    format!("stages[{index}].name"),
+                    "must not be empty",
+                ));
             }
         }
 
         let mut asset_ids = BTreeSet::new();
         for (index, asset) in self.assets.iter().enumerate() {
             let base = format!("assets[{index}]");
-            validate_unique_id(&asset.id, &format!("{base}.id"), &mut asset_ids, &mut issues);
+            validate_unique_id(
+                &asset.id,
+                &format!("{base}.id"),
+                &mut asset_ids,
+                &mut issues,
+            );
             if asset.path.trim().is_empty() {
-                issues.push(ValidationIssue::new(format!("{base}.path"), "must not be empty"));
+                issues.push(ValidationIssue::new(
+                    format!("{base}.path"),
+                    "must not be empty",
+                ));
             }
         }
 
         let mut setting_ids = BTreeSet::new();
         for (index, setting) in self.mod_settings.iter().enumerate() {
             let base = format!("modSettings[{index}]");
-            validate_unique_id(&setting.id, &format!("{base}.id"), &mut setting_ids, &mut issues);
+            validate_unique_id(
+                &setting.id,
+                &format!("{base}.id"),
+                &mut setting_ids,
+                &mut issues,
+            );
             if setting.label.trim().is_empty() {
-                issues.push(ValidationIssue::new(format!("{base}.label"), "must not be empty"));
+                issues.push(ValidationIssue::new(
+                    format!("{base}.label"),
+                    "must not be empty",
+                ));
             }
         }
 
-        if issues.is_empty() { Ok(()) } else { Err(issues) }
+        if issues.is_empty() {
+            Ok(())
+        } else {
+            Err(issues)
+        }
     }
 
     pub fn to_pretty_json(&self) -> Result<String, serde_json::Error> {
@@ -243,7 +289,10 @@ pub struct ValidationIssue {
 
 impl ValidationIssue {
     fn new(path: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { path: path.into(), message: message.into() }
+        Self {
+            path: path.into(),
+            message: message.into(),
+        }
     }
 }
 
@@ -305,7 +354,9 @@ mod tests {
         project.songs[0].notes[0].gameplay.lane = 4;
         let issues = project.validate().unwrap_err();
         assert!(issues.iter().any(|issue| issue.path == "songs[0].bpm"));
-        assert!(issues.iter().any(|issue| issue.path == "songs[0].notes[0].gameplay.lane"));
+        assert!(issues
+            .iter()
+            .any(|issue| issue.path == "songs[0].notes[0].gameplay.lane"));
     }
 
     #[test]

@@ -57,6 +57,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fu-project"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "fu-storage"
 version = "0.1.0"
 dependencies = [
