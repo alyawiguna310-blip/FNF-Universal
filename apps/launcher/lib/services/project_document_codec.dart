@@ -81,6 +81,41 @@ class ProjectDocumentCodec {
     };
   }
 
+  /// Migrates the editor prototype's original chart/character/stage layout.
+  /// This keeps existing locally saved v0.1 projects loadable.
+  static Map<String, dynamic> migrateLegacy(Map<String, dynamic> legacy) {
+    final project = _asMap(legacy['project']);
+    final chart = _asMap(legacy['chart']);
+    final character = _asMap(legacy['character']);
+    final stage = _asMap(legacy['stage']);
+    final notes = <String>{};
+    for (final rawNote in _asList(chart['notes'])) {
+      final note = _asMap(rawNote);
+      final lane = note['lane'];
+      final step = note['step'];
+      if (lane is int && step is int && lane >= 0 && lane < 4 && step >= 0 && step < 16) {
+        notes.add('$lane:$step');
+      }
+    }
+    final rawLayers = _asMap(stage['layers']);
+    final layers = <String, bool>{};
+    for (final entry in rawLayers.entries) {
+      if (entry.value is bool) layers[entry.key] = entry.value as bool;
+    }
+    return fromEditor(
+      projectName: project['name']?.toString() ?? 'Untitled Mod',
+      targetEngine: project['targetEngine']?.toString() ?? 'Engine-independent',
+      songName: chart['song']?.toString() ?? 'Untitled Song',
+      bpm: (chart['bpm'] is num ? (chart['bpm'] as num).toDouble() : 120.0),
+      notes: notes,
+      characterName: character['name']?.toString() ?? 'character',
+      animations: _asList(character['animations']).map((value) => value.toString()).toList(),
+      stageName: stage['name']?.toString() ?? 'stage',
+      stageObjects: _asList(stage['objects']).map((value) => value.toString()).toList(),
+      layers: layers,
+    );
+  }
+
   /// Converts canonical Rust JSON back into the editor's existing control
   /// state shape, allowing old editor widgets to be migrated incrementally.
   static Map<String, dynamic> toEditorState(Map<String, dynamic> document) {
