@@ -240,6 +240,8 @@ pub struct CharacterDefinition {
     pub id: String,
     pub name: String,
     #[serde(default)]
+    pub description: String,
+    #[serde(default)]
     pub animations: Vec<String>,
 }
 
