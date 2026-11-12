@@ -25,25 +25,24 @@ typedef _VersionDart = int Function();
 /// The native library must be built for the current platform and made
 /// available to the app package before these methods are called.
 class NativeProjectBridge {
-  NativeProjectBridge._(this._library)
-      : _apiVersion = _library
+  NativeProjectBridge._(ffi.DynamicLibrary library)
+      : _apiVersion = library
             .lookupFunction<_VersionNative, _VersionDart>(
               'fu_bridge_api_version',
             ),
-        _create = _library.lookupFunction<_JsonNative, _JsonDart>(
+        _create = library.lookupFunction<_JsonNative, _JsonDart>(
           'fu_project_create_json',
         ),
-        _validate = _library.lookupFunction<_JsonNative, _JsonDart>(
+        _validate = library.lookupFunction<_JsonNative, _JsonDart>(
           'fu_project_validate_json',
         ),
-        _normalize = _library.lookupFunction<_JsonNative, _JsonDart>(
+        _normalize = library.lookupFunction<_JsonNative, _JsonDart>(
           'fu_project_normalize_json',
         );
 
   static const int supportedApiVersion = 1;
   static const int _maxOutputBytes = 16 * 1024 * 1024;
 
-  final ffi.DynamicLibrary _library;
   final _VersionDart _apiVersion;
   final _JsonDart _create;
   final _JsonDart _validate;
