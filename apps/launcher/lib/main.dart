@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'services/native_project_bridge.dart';
+import 'services/project_document_codec.dart';
+
 void main() => runApp(const FnfUniversalApp());
 
 class FnfUniversalApp extends StatelessWidget {
@@ -79,8 +82,8 @@ class _EditorShellState extends State<EditorShell> {
     try {
       final dir = await _projectDirectory();
       final file = File('${dir.path}${Platform.pathSeparator}${_safeFileName(_projectName.text)}.fnfup.json');
-      const encoder = JsonEncoder.withIndent('  ');
-      await file.writeAsString(encoder.convert(_projectData()), flush: true);
+      final projectJson = NativeProjectBridge.open().normalizeProject(jsonEncode(_projectData()));
+      await file.writeAsString(projectJson, flush: true);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Project saved: ${file.path}')),
@@ -136,12 +139,17 @@ class _EditorShellState extends State<EditorShell> {
       );
       if (selected == null || !mounted) return;
 
-      final decoded = jsonDecode(await selected.readAsString());
-      if (decoded is! Map<String, dynamic> ||
-          decoded['format'] != 'fnf-universal-project' ||
-          decoded['formatVersion'] != 1) {
-        throw const FormatException('Unsupported or invalid FNF Universal project file.');
+      final rawDocument = jsonDecode(await selected.readAsString());
+      if (rawDocument is! Map<String, dynamic>) {
+        throw const FormatException('Project file must contain a JSON object.');
       }
+      final candidate = rawDocument['songs'] is List
+          ? rawDocument
+          : ProjectDocumentCodec.migrateLegacy(rawDocument);
+      final normalized = NativeProjectBridge.open().normalizeProject(jsonEncode(candidate));
+      final decoded = ProjectDocumentCodec.toEditorState(
+        jsonDecode(normalized) as Map<String, dynamic>,
+      );
 
       final project = decoded['project'] as Map<String, dynamic>? ?? {};
       final chart = decoded['chart'] as Map<String, dynamic>? ?? {};
@@ -221,42 +229,21 @@ class _EditorShellState extends State<EditorShell> {
     }
   }
 
-  Map<String, dynamic> _projectData() => {
-        'format': 'fnf-universal-project',
-        'formatVersion': 1,
-        'project': {
-          'name': _projectName.text,
-          'targetEngine': _targetEngine,
-        },
-        'chart': {
-          'song': _songName.text,
-          'bpm': int.tryParse(_bpm.text) ?? 120,
-          'lanes': 4,
-          'notes': _notes.map((key) {
-            final parts = key.split(':');
-            return {'lane': int.parse(parts[0]), 'step': int.parse(parts[1])};
-          }).toList(),
-        },
-        'character': {
-          'name': _characterName.text,
-          'description': _characterDescription.text,
-          'animations': _animations,
-          'sprite': null,
-        },
-        'stage': {
-          'name': _stageName.text,
-          'objects': _stageObjects,
-          'layers': _layers,
-        },
-        'assets': <String>[],
-        'compatibility': {
-          'status': 'editor-draft',
-          'note': 'Engine-specific export and runtime validation are not implemented yet.',
-        },
-      };
+  Map<String, dynamic> _projectData() => ProjectDocumentCodec.fromEditor(
+        projectName: _projectName.text,
+        targetEngine: _targetEngine,
+        songName: _songName.text,
+        bpm: double.tryParse(_bpm.text) ?? 120,
+        notes: _notes,
+        characterName: _characterName.text,
+        animations: _animations,
+        stageName: _stageName.text,
+        stageObjects: _stageObjects,
+        layers: _layers,
+      );
 
   Future<void> _showExport() async {
-    final pretty = const JsonEncoder.withIndent('  ').convert(_projectData());
+    final pretty = NativeProjectBridge.open().normalizeProject(jsonEncode(_projectData()));
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
@@ -798,4 +785,3 @@ class _Notice extends StatelessWidget {
           ],
         ),
       );
-}
