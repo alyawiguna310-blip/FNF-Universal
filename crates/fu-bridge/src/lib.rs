@@ -1,3 +1,4 @@
+#![allow(clippy::missing_safety_doc)]
 //! C ABI bridge for project operations.
 //!
 //! The caller owns all input and output memory. For each operation, call once
