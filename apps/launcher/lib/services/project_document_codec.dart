@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 /// Adapts the editor's current controls to the canonical Rust project schema.
 ///
 /// This is a boundary adapter only; validation and canonical serialization
@@ -20,6 +18,13 @@ class ProjectDocumentCodec {
     final projectId = _id(projectName, fallback: 'untitled-mod');
     final safeBpm = bpm.isFinite && bpm > 0 ? bpm : 120.0;
     final stepDurationMs = 60000 / safeBpm / 4;
+    final sortedNotes = notes.toList()
+      ..sort((a, b) {
+        final aa = a.split(':').map(int.parse).toList();
+        final bb = b.split(':').map(int.parse).toList();
+        final byStep = aa[1].compareTo(bb[1]);
+        return byStep != 0 ? byStep : aa[0].compareTo(bb[0]);
+      });
 
     return {
       'format': 'fnf-universal-project',
@@ -35,28 +40,18 @@ class ProjectDocumentCodec {
           'title': songName.trim().isEmpty ? 'Untitled Song' : songName.trim(),
           'bpm': safeBpm,
           'laneCount': 4,
-          'notes': notes.toList()
-            ..sort((a, b) {
-              final aa = a.split(':').map(int.parse).toList();
-              final bb = b.split(':').map(int.parse).toList();
-              final byStep = aa[1].compareTo(bb[1]);
-              return byStep != 0 ? byStep : aa[0].compareTo(bb[0]);
-            })
-            .asMap()
-            .entries
-            .map((entry) {
-              final parts = entry.value.split(':').map(int.parse).toList();
-              return {
-                'id': 'note-${entry.key + 1}',
-                'gameplay': {
-                  'lane': parts[0],
-                  'strumTimeMs': (parts[1] * stepDurationMs).round(),
-                  'sustainMs': 0,
-                },
-                'visual': null,
-              };
-            })
-            .toList(),
+          'notes': sortedNotes.asMap().entries.map((entry) {
+            final parts = entry.value.split(':').map(int.parse).toList();
+            return {
+              'id': 'note-${entry.key + 1}',
+              'gameplay': {
+                'lane': parts[0],
+                'strumTimeMs': (parts[1] * stepDurationMs).round(),
+                'sustainMs': 0,
+              },
+              'visual': null,
+            };
+          }).toList(),
         },
       ],
       'characters': [
@@ -158,9 +153,17 @@ class ProjectDocumentCodec {
 
   static String _id(String value, {required String fallback}) {
     final result = value.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9_-]+'), '-');
-    return result.replaceAll(RegExp(r'^-+|-+$'), '').isEmpty
-        ? fallback
-        : result.replaceAll(RegExp(r'^-+|-+$'), '');
+    final cleaned = result.replaceAll(RegExp(r'^-+|-+
+  }
+
+  static Map<String, dynamic> _asMap(dynamic value) =>
+      value is Map<String, dynamic> ? value : <String, dynamic>{};
+
+  static List<dynamic> _asList(dynamic value) =>
+      value is List ? value : <dynamic>[];
+}
+), '');
+    return cleaned.isEmpty ? fallback : cleaned;
   }
 
   static Map<String, dynamic> _asMap(dynamic value) =>
