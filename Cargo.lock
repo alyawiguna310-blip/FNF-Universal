@@ -22,6 +22,10 @@ version = "0.1.0"
 [[package]]
 name = "fu-bridge"
 version = "0.1.0"
+dependencies = [
+ "fu-project",
+ "serde_json",
+]
 
 [[package]]
 name = "fu-chart"

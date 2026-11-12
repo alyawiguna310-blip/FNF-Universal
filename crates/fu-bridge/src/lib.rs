@@ -150,9 +150,7 @@ mod tests {
         function: unsafe extern "C" fn(*const u8, usize, *mut u8, usize) -> isize,
         input: &str,
     ) -> String {
-        let required = unsafe {
-            function(input.as_ptr(), input.len(), std::ptr::null_mut(), 0)
-        };
+        let required = unsafe { function(input.as_ptr(), input.len(), std::ptr::null_mut(), 0) };
         assert!(required > 0);
         let mut output = vec![0_u8; required as usize];
         let written = unsafe {
@@ -216,12 +214,7 @@ mod tests {
         let input = METADATA.as_bytes();
         let mut tiny = [0_u8; 1];
         let result = unsafe {
-            fu_project_create_json(
-                input.as_ptr(),
-                input.len(),
-                tiny.as_mut_ptr(),
-                tiny.len(),
-            )
+            fu_project_create_json(input.as_ptr(), input.len(), tiny.as_mut_ptr(), tiny.len())
         };
         assert!(result < -1);
     }
