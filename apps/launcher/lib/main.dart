@@ -244,10 +244,12 @@ class _EditorShellState extends State<EditorShell> {
       );
 
   Future<void> _showExport() async {
-    final pretty = NativeProjectBridge.open().normalizeProject(jsonEncode(_projectData()));
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
+    try {
+      final pretty = NativeProjectBridge.open().normalizeProject(jsonEncode(_projectData()));
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
         title: const Text('Project data preview'),
         content: SizedBox(
           width: 620,
@@ -270,8 +272,14 @@ class _EditorShellState extends State<EditorShell> {
           ),
           FilledButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
         ],
-      ),
-    );
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not validate project: $error')),
+      );
+    }
   }
 
   @override
