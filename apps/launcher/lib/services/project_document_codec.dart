@@ -32,7 +32,8 @@ class ProjectDocumentCodec {
       'formatVersion': 1,
       'project': {
         'id': projectId,
-        'name': projectName.trim().isEmpty ? 'Untitled Mod' : projectName.trim(),
+        'name':
+            projectName.trim().isEmpty ? 'Untitled Mod' : projectName.trim(),
         'targetEngine': targetEngine,
       },
       'songs': [
@@ -58,7 +59,8 @@ class ProjectDocumentCodec {
       'characters': [
         {
           'id': _id(characterName, fallback: 'character'),
-          'name': characterName.trim().isEmpty ? 'Character' : characterName.trim(),
+          'name':
+              characterName.trim().isEmpty ? 'Character' : characterName.trim(),
           'description': characterDescription,
           'animations': List<String>.from(animations),
         },
@@ -97,8 +99,12 @@ class ProjectDocumentCodec {
       final note = _asMap(rawNote);
       final lane = note['lane'];
       final step = note['step'];
-      if (lane is int && step is int &&
-          lane >= 0 && lane < 4 && step >= 0 && step < 16) {
+      if (lane is int &&
+          step is int &&
+          lane >= 0 &&
+          lane < 4 &&
+          step >= 0 &&
+          step < 16) {
         notes.add('$lane:$step');
       }
     }
@@ -119,9 +125,12 @@ class ProjectDocumentCodec {
       notes: notes,
       characterName: character['name']?.toString() ?? 'character',
       characterDescription: character['description']?.toString() ?? '',
-      animations: _asList(character['animations']).map((value) => value.toString()).toList(),
+      animations: _asList(character['animations'])
+          .map((value) => value.toString())
+          .toList(),
       stageName: stage['name']?.toString() ?? 'stage',
-      stageObjects: _asList(stage['objects']).map((value) => value.toString()).toList(),
+      stageObjects:
+          _asList(stage['objects']).map((value) => value.toString()).toList(),
       layers: layers,
     );
   }
@@ -137,7 +146,8 @@ class ProjectDocumentCodec {
     final songs = _asList(document['songs']);
     final song = songs.isEmpty ? <String, dynamic>{} : _asMap(songs.first);
     final characters = _asList(document['characters']);
-    final character = characters.isEmpty ? <String, dynamic>{} : _asMap(characters.first);
+    final character =
+        characters.isEmpty ? <String, dynamic>{} : _asMap(characters.first);
     final stages = _asList(document['stages']);
     final stage = stages.isEmpty ? <String, dynamic>{} : _asMap(stages.first);
 
@@ -165,16 +175,20 @@ class ProjectDocumentCodec {
     final stageLayers = <String, bool>{};
     for (final rawObject in _asList(stage['objects'])) {
       final object = _asMap(rawObject);
-      final name = object['name']?.toString() ?? object['id']?.toString() ?? 'Object ${stageObjects.length + 1}';
+      final name = object['name']?.toString() ??
+          object['id']?.toString() ??
+          'Object ${stageObjects.length + 1}';
       stageObjects.add(name);
-      stageLayers[name] = object['visible'] is bool ? object['visible'] as bool : true;
+      stageLayers[name] =
+          object['visible'] is bool ? object['visible'] as bool : true;
     }
 
     return {
       'project': {
         'id': project['id']?.toString() ?? 'untitled-mod',
         'name': project['name']?.toString() ?? 'Untitled Mod',
-        'targetEngine': project['targetEngine']?.toString() ?? 'Engine-independent',
+        'targetEngine':
+            project['targetEngine']?.toString() ?? 'Engine-independent',
       },
       'chart': {
         'song': song['title']?.toString() ?? 'Untitled Song',
@@ -184,7 +198,9 @@ class ProjectDocumentCodec {
       'character': {
         'name': character['name']?.toString() ?? 'character',
         'description': character['description']?.toString() ?? '',
-        'animations': _asList(character['animations']).map((value) => value.toString()).toList(),
+        'animations': _asList(character['animations'])
+            .map((value) => value.toString())
+            .toList(),
       },
       'stage': {
         'name': stage['name']?.toString() ?? 'stage',

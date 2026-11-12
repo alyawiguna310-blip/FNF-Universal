@@ -2,7 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fnf_universal/main.dart';
 
 void main() {
-  testWidgets('FNF Universal Studio exposes project save and load actions', (tester) async {
+  testWidgets('FNF Universal Studio exposes project save and load actions',
+      (tester) async {
     await tester.pumpWidget(const FnfUniversalApp());
 
     expect(find.text('FNF Universal Studio'), findsOneWidget);
