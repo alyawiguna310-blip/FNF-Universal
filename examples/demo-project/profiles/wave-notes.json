@@ -1,0 +1,6 @@
+{
+  "id":"wave-notes",
+  "visuals":{"texture":"assets/notes/blue-arrow.png","scale":1.0,"rotationDegrees":0,
+    "tint":"#65B9FFFF","animation":"pulse","trail":true},
+  "movement":{"mode":"scripted","speedMultiplier":1.0,"script":"note-motion"}
+}
