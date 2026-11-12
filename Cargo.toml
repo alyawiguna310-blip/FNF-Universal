@@ -9,6 +9,7 @@ members = [
   "crates/fu-storage",
   "crates/fu-benchmark",
   "crates/fu-bridge",
+  "crates/fu-project",
 ]
 
 [workspace.package]
