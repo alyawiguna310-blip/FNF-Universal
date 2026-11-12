@@ -7,7 +7,7 @@
 //! negative required length. A negative return is never a byte count.
 
 use fu_project::{ProjectDocument, ProjectMetadata};
-use serde_json::{json, Value};
+use serde_json::json;
 use std::slice;
 use std::str;
 
@@ -144,6 +144,7 @@ fn write_bytes(bytes: &[u8], output_ptr: *mut u8, output_capacity: usize) -> isi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     fn call_buffered(
         function: unsafe extern "C" fn(*const u8, usize, *mut u8, usize) -> isize,
