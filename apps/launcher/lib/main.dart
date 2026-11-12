@@ -236,6 +236,7 @@ class _EditorShellState extends State<EditorShell> {
         bpm: double.tryParse(_bpm.text) ?? 120,
         notes: _notes,
         characterName: _characterName.text,
+        characterDescription: _characterDescription.text,
         animations: _animations,
         stageName: _stageName.text,
         stageObjects: _stageObjects,
