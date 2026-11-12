@@ -1,0 +1,16 @@
+{
+  "format":"fnf-universal-project","formatVersion":1,"id":"demo.scripted-notes",
+  "name":"Scripted Notes Demo","author":"Example Creator",
+  "description":"Demonstrates visual note motion and creator-defined boss settings.",
+  "targetEngines":["fnf-universal"],"assets":["assets/notes/blue-arrow.png"],
+  "songs":[{"id":"demo-song","chart":"charts/demo-song.json",
+    "noteVisualProfile":"profiles/wave-notes.json","enemyProfile":"profiles/demo-boss.json",
+    "settingsProfile":"settings/boss-options.json",
+    "scripts":["scripts/note-motion.js","scripts/boss.js"]}],
+  "scripts":[
+    {"id":"note-motion","path":"scripts/note-motion.js","language":"javascript",
+     "capabilities":["notes.visual.read","notes.visual.write","song.time.read"]},
+    {"id":"boss","path":"scripts/boss.js","language":"javascript",
+     "capabilities":["enemy.state.read","enemy.state.write","song.events.read"]}
+  ]
+}

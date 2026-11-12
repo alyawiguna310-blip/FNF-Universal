@@ -1,0 +1,31 @@
+{
+  "id": "boss-options",
+  "title": "Boss Settings",
+  "description": "Choose how this mod's boss mechanics behave.",
+  "options": [
+    {
+      "id": "enemy_attacks",
+      "label": "Enable enemy attacks",
+      "type": "boolean",
+      "default": true,
+      "category": "Gameplay"
+    },
+    {
+      "id": "miss_damage",
+      "label": "Damage on missed notes",
+      "type": "number",
+      "default": 10,
+      "min": 0,
+      "max": 100,
+      "step": 1,
+      "category": "Gameplay"
+    },
+    {
+      "id": "assist_mode",
+      "label": "Assist mode",
+      "type": "boolean",
+      "default": false,
+      "category": "Accessibility"
+    }
+  ]
+}

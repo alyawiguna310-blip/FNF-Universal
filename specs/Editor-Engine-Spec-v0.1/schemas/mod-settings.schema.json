@@ -1,0 +1,17 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://fnfuniversal.dev/schemas/mod-settings.schema.json",
+  "title":"Creator-defined Mod Settings","type":"object","required":["id","title","options"],
+  "properties":{
+    "id":{"type":"string"},"title":{"type":"string","maxLength":80},
+    "description":{"type":"string","maxLength":500},
+    "options":{"type":"array","items":{"type":"object","required":["id","label","type","default"],"properties":{
+      "id":{"type":"string"},"label":{"type":"string","maxLength":80},
+      "type":{"enum":["boolean","number","choice"]},"default":{},
+      "min":{"type":"number"},"max":{"type":"number"},"step":{"type":"number"},
+      "choices":{"type":"array","items":{"type":"string"},"uniqueItems":true},
+      "category":{"type":"string","maxLength":40}
+    },"additionalProperties":false}}
+  },
+  "additionalProperties":false
+}

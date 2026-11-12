@@ -1,0 +1,16 @@
+{
+  "id": "vslice",
+  "name": "V-Slice (example integration target)",
+  "version": "source-revision-to-be-pinned",
+  "runtime": "haxe-haxeflixel-lime",
+  "platforms": [
+    "android",
+    "windows",
+    "linux"
+  ],
+  "integration_status": "manifest_only",
+  "capabilities": [
+    "base-game-runtime"
+  ],
+  "notes": "Example only. Verify exact build support and redistribution permissions before integration."
+}

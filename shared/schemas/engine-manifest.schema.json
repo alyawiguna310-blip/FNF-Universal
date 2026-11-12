@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FNF Universal Engine Manifest",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "version",
+    "runtime",
+    "platforms",
+    "integration_status"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string"
+    },
+    "runtime": {
+      "type": "string"
+    },
+    "platforms": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "android",
+          "windows",
+          "linux"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "integration_status": {
+      "enum": [
+        "manifest_only",
+        "experimental",
+        "integrated",
+        "verified"
+      ]
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

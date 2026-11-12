@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fnfuniversal.dev/schemas/enemy-profile.schema.json",
+  "title": "Enemy/Boss Profile",
+  "type": "object",
+  "required": [
+    "id",
+    "health",
+    "phases"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "health": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1000000
+    },
+    "healthDrainOnMiss": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000
+    },
+    "phases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "trigger"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "trigger": {
+            "enum": [
+              "song-time",
+              "health-threshold",
+              "miss-count",
+              "event"
+            ]
+          },
+          "threshold": {
+            "type": "number"
+          },
+          "attackScript": {
+            "type": "string"
+          },
+          "animation": {
+            "type": "string"
+          },
+          "durationSeconds": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 600
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

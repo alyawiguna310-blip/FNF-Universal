@@ -1,0 +1,9 @@
+target/
+build/
+.dart_tool/
+.flutter-plugins*
+.packages
+.idea/
+.vscode/
+*.log
+.DS_Store

@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fnfuniversal.dev/schemas/note-visual-profile.schema.json",
+  "title": "Note Visual Profile",
+  "type": "object",
+  "required": [
+    "id",
+    "visuals",
+    "movement"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "visuals": {
+      "type": "object",
+      "properties": {
+        "texture": {
+          "type": "string"
+        },
+        "scale": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 8
+        },
+        "rotationDegrees": {
+          "type": "number"
+        },
+        "tint": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$"
+        },
+        "animation": {
+          "type": "string"
+        },
+        "trail": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "movement": {
+      "type": "object",
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "static",
+            "linear",
+            "sine",
+            "curve",
+            "orbit",
+            "scripted"
+          ]
+        },
+        "speedMultiplier": {
+          "type": "number",
+          "minimum": 0.05,
+          "maximum": 8
+        },
+        "amplitude": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2000
+        },
+        "frequency": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 30
+        },
+        "script": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "gameplayPath": {
+      "type": "object",
+      "description": "Optional explicit gameplay-path request; requires engine support and validation.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "policy": {
+          "enum": [
+            "visual-only",
+            "path-aware-hitbox"
+          ]
+        }
+      },
+      "required": [
+        "enabled",
+        "policy"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

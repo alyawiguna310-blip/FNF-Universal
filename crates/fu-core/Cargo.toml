@@ -1,0 +1,8 @@
+[package]
+name = "fu-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fu-engine = { path = "../fu-engine" }
