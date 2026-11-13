@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fnf_universal/ui/fnf_app.dart';
+import 'package:fnf_universal/ui/launcher_ui_controller.dart';
 
 void _useWideScreen(WidgetTester tester) {
   tester.view.physicalSize = const Size(1280, 800);
@@ -11,12 +12,21 @@ void _useWideScreen(WidgetTester tester) {
 
 // Motion is switched off in most tests: a looping backdrop never "settles",
 // which would make pumpAndSettle hang. One test below covers the animated path.
-const _still = FnfMenuApp(animated: false);
+Widget _still({LauncherUiController? ui}) =>
+    FnfMenuApp(animated: false, uiController: ui ?? LauncherUiController());
+
+Future<void> _unlockDeveloper(WidgetTester tester) async {
+  for (var i = 0; i < 7; i++) {
+    await tester.tap(find.byKey(const ValueKey('version-tag')));
+    await tester.pump();
+  }
+  await tester.pump();
+}
 
 void main() {
   testWidgets('main menu shows every required entry', (tester) async {
     _useWideScreen(tester);
-    await tester.pumpWidget(_still);
+    await tester.pumpWidget(_still());
     await tester.pump();
 
     for (final id in ['story', 'freeplay', 'mods', 'settings', 'credits']) {
@@ -27,7 +37,7 @@ void main() {
 
   testWidgets('keyboard: arrows move, Enter opens, Escape returns', (tester) async {
     _useWideScreen(tester);
-    await tester.pumpWidget(_still);
+    await tester.pumpWidget(_still());
     await tester.pump();
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
@@ -44,7 +54,7 @@ void main() {
 
   testWidgets('touch: tapping an entry opens it and back returns', (tester) async {
     _useWideScreen(tester);
-    await tester.pumpWidget(_still);
+    await tester.pumpWidget(_still());
     await tester.pump();
 
     await tester.tap(find.byKey(const ValueKey('menu-mods')));
@@ -58,14 +68,10 @@ void main() {
 
   testWidgets('developer mode unlocks the existing studio and returns', (tester) async {
     _useWideScreen(tester);
-    await tester.pumpWidget(_still);
+    await tester.pumpWidget(_still());
     await tester.pump();
 
-    for (var i = 0; i < 7; i++) {
-      await tester.tap(find.byKey(const ValueKey('version-tag')));
-      await tester.pump();
-    }
-    await tester.pump();
+    await _unlockDeveloper(tester);
     expect(find.byKey(const ValueKey('menu-developer')), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('menu-developer')));
@@ -79,12 +85,47 @@ void main() {
 
   testWidgets('animated menu: confirm flash, then the entry opens', (tester) async {
     _useWideScreen(tester);
-    await tester.pumpWidget(const FnfMenuApp());
+    await tester.pumpWidget(FnfMenuApp(uiController: LauncherUiController()));
     await tester.pump(const Duration(milliseconds: 300));
 
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.byKey(const ValueKey('feature-status-story')), findsOneWidget);
+  });
+
+  testWidgets('menu follows the launcher UI definition', (tester) async {
+    _useWideScreen(tester);
+    final ui = LauncherUiController();
+    await tester.pumpWidget(_still(ui: ui));
+    await tester.pump();
+
+    ui.update(ui.definition.copyWith(
+      wordmarkMain: 'My Mod',
+      entries: [
+        for (final e in ui.definition.entries)
+          e.id == 'story' ? e.copyWith(visible: false) : e,
+      ],
+    ));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('menu-story')), findsNothing);
+    expect(find.byKey(const ValueKey('menu-freeplay')), findsOneWidget);
+    expect(find.text('MY MOD'), findsOneWidget);
+  });
+
+  testWidgets('developer tools expose the Menu/UI editor with a live preview', (tester) async {
+    _useWideScreen(tester);
+    await tester.pumpWidget(_still());
+    await tester.pump();
+
+    await _unlockDeveloper(tester);
+    await tester.tap(find.byKey(const ValueKey('menu-developer')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('dev-tab-menuUi')));
+    await tester.pumpAndSettle();
+    expect(find.text('LIVE PREVIEW'), findsOneWidget);
+    expect(find.byKey(const ValueKey('ui-save')), findsOneWidget);
   });
 }

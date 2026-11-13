@@ -2,16 +2,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'fnf_tokens.dart';
-import 'menu_entry.dart';
 import 'main_menu.dart' show StatusTag;
+import 'menu_entry.dart';
 
 /// Shown for menu entries that are not built yet. It says plainly what is
 /// missing instead of pretending the feature exists. Escape, controller B and
 /// the back button all return to the menu.
 class FeatureStatusScreen extends StatelessWidget {
-  const FeatureStatusScreen({super.key, required this.entry});
+  const FeatureStatusScreen({
+    super.key,
+    required this.entry,
+    this.accent = FnfColors.accent,
+  });
 
   final MenuEntry entry;
+  final Color accent;
 
   @override
   Widget build(BuildContext context) {
@@ -42,7 +47,7 @@ class FeatureStatusScreen extends StatelessWidget {
                     const SizedBox(height: FnfSpace.lg),
                     Text(entry.label.toUpperCase(), style: FnfType.display),
                     const SizedBox(height: FnfSpace.md),
-                    StatusTag(status: entry.status),
+                    StatusTag(status: entry.status, accent: accent),
                     const SizedBox(height: FnfSpace.lg),
                     Text(entry.summary, style: FnfType.body),
                     if (entry.requires != null) ...[

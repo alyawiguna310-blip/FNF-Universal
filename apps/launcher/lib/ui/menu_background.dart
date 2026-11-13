@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'fnf_tokens.dart';
+import 'menu_definition.dart';
 
 /// Placeholder tempo for the menu's idle groove. Replace with a real song BPM
 /// once the audio layer exists.
@@ -22,15 +23,24 @@ double beatPulse(double barPhase) {
 /// beat. Purely decorative, so it is excluded from semantics.
 ///
 /// When [running] is false (reduced motion, tests, menu hidden) it paints a
-/// static frame.
+/// static frame. With [MenuBackgroundStyle.plain] nothing is painted.
 class MenuBackground extends StatelessWidget {
-  const MenuBackground({super.key, required this.beat, required this.running});
+  const MenuBackground({
+    super.key,
+    required this.beat,
+    required this.running,
+    required this.accent,
+    this.style = MenuBackgroundStyle.stripes,
+  });
 
   final Animation<double> beat;
   final bool running;
+  final Color accent;
+  final MenuBackgroundStyle style;
 
   @override
   Widget build(BuildContext context) {
+    if (style == MenuBackgroundStyle.plain) return const SizedBox.shrink();
     return ExcludeSemantics(
       child: RepaintBoundary(
         child: AnimatedBuilder(
@@ -39,7 +49,9 @@ class MenuBackground extends StatelessWidget {
             final phase = running ? beat.value : 0.0;
             final pulse = running ? beatPulse(beat.value) : 0.0;
             return SizedBox.expand(
-              child: CustomPaint(painter: _StripePainter(phase: phase, pulse: pulse)),
+              child: CustomPaint(
+                painter: _StripePainter(phase: phase, pulse: pulse, accent: accent),
+              ),
             );
           },
         ),
@@ -49,10 +61,15 @@ class MenuBackground extends StatelessWidget {
 }
 
 class _StripePainter extends CustomPainter {
-  const _StripePainter({required this.phase, required this.pulse});
+  const _StripePainter({
+    required this.phase,
+    required this.pulse,
+    required this.accent,
+  });
 
   final double phase;
   final double pulse;
+  final Color accent;
 
   static const double _spacing = 112;
   static const double _width = 44;
@@ -62,8 +79,7 @@ class _StripePainter extends CustomPainter {
     canvas.clipRect(Offset.zero & size);
     final base =
         Color.lerp(FnfColors.background, FnfColors.surfaceRaised, 0.45)!;
-    final paint = Paint()
-      ..color = Color.lerp(base, FnfColors.accent, pulse * 0.10)!;
+    final paint = Paint()..color = Color.lerp(base, accent, pulse * 0.10)!;
     final shift = phase * _spacing;
     for (double x = -size.height - _spacing;
         x < size.width + _spacing;
@@ -81,5 +97,7 @@ class _StripePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_StripePainter oldDelegate) =>
-      oldDelegate.phase != phase || oldDelegate.pulse != pulse;
+      oldDelegate.phase != phase ||
+      oldDelegate.pulse != pulse ||
+      oldDelegate.accent != accent;
 }

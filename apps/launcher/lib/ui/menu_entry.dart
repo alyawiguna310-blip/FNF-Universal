@@ -24,6 +24,16 @@ class MenuEntry {
   /// Honest description of what is missing, shown for entries that are not
   /// built yet. Null when the entry works.
   final String? requires;
+
+  /// Only text can be restyled. Status and what-it-needs always come from the
+  /// built-in entry, so a mod cannot make an unbuilt feature look ready.
+  MenuEntry copyWith({String? label, String? summary}) => MenuEntry(
+        id: id,
+        label: label ?? this.label,
+        summary: summary ?? this.summary,
+        status: status,
+        requires: requires,
+      );
 }
 
 const kMainMenuEntries = <MenuEntry>[
@@ -75,3 +85,10 @@ const kDeveloperEntry = MenuEntry(
   summary: 'Open the mod authoring tools: project, chart, character and stage editors.',
   status: MenuStatus.ready,
 );
+
+MenuEntry? builtInEntry(String id) {
+  for (final entry in kMainMenuEntries) {
+    if (entry.id == id) return entry;
+  }
+  return null;
+}

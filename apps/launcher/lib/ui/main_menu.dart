@@ -5,34 +5,39 @@ import 'package:flutter/services.dart';
 import 'developer_mode.dart';
 import 'feature_status_screen.dart';
 import 'fnf_tokens.dart';
+import 'launcher_ui_controller.dart';
 import 'menu_background.dart';
+import 'menu_definition.dart';
 import 'menu_entry.dart';
 
 /// Keep in sync with apps/launcher/pubspec.yaml until a version source is wired.
 const String kAppVersionLabel = 'v0.1.0';
 
 /// The main menu IS the launcher: keyboard, controller and touch all drive the
-/// same selection state.
+/// same selection state. Its look (entries, title, accent, background) comes
+/// from [LauncherUiController], which the Menu/UI editor and mod packages edit.
 ///
 /// - Arrow keys / D-pad: move selection (wraps).
 /// - Enter / controller A: confirm (brief accent flash, then opens).
-/// - Escape / controller B: back (inside sub-screens; the root has nowhere to go).
+/// - Escape / controller B: back (inside sub-screens).
 /// - Touch: tap an entry; optional on-screen up/down/confirm pad.
 ///
-/// Motion: animated backdrop plus a beat bop on the selected entry. All of it
-/// stops when the OS asks for reduced motion, when [animated] is false, or
-/// while the menu is covered by another surface.
+/// Motion stops when the OS asks for reduced motion, when [animated] is false,
+/// or while the menu is covered by another surface.
 class MainMenuScreen extends StatefulWidget {
   const MainMenuScreen({
     super.key,
     required this.developerMode,
+    required this.ui,
     required this.onOpenDeveloper,
     this.isActive = true,
     this.showTouchControls,
     this.animated = true,
+    this.preview = false,
   });
 
   final DeveloperModeController developerMode;
+  final LauncherUiController ui;
   final VoidCallback onOpenDeveloper;
 
   /// False while another surface (Developer tools) is covering the menu.
@@ -43,6 +48,10 @@ class MainMenuScreen extends StatefulWidget {
 
   /// Turns the backdrop and selection motion on or off.
   final bool animated;
+
+  /// Read-only mode used by the editor's live preview: no autofocus, no keys,
+  /// no navigation.
+  final bool preview;
 
   @override
   State<MainMenuScreen> createState() => _MainMenuScreenState();
@@ -63,10 +72,13 @@ class _MainMenuScreenState extends State<MainMenuScreen>
   bool _confirming = false;
   bool _reduceMotion = false;
 
-  List<MenuEntry> get _entries => [
-        ...kMainMenuEntries,
-        if (widget.developerMode.unlocked) kDeveloperEntry,
-      ];
+  List<MenuEntry> get _entries => resolveMenuEntries(
+        widget.ui.definition,
+        developerUnlocked: widget.developerMode.unlocked,
+      );
+
+  int _safeIndex(List<MenuEntry> entries) =>
+      _selected >= entries.length ? entries.length - 1 : _selected;
 
   bool get _touch =>
       widget.showTouchControls ??
@@ -88,7 +100,7 @@ class _MainMenuScreenState extends State<MainMenuScreen>
   @override
   void didUpdateWidget(MainMenuScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.isActive && !oldWidget.isActive) {
+    if (widget.isActive && !oldWidget.isActive && !widget.preview) {
       _focus.requestFocus();
     }
     _syncAnimation();
@@ -133,8 +145,9 @@ class _MainMenuScreenState extends State<MainMenuScreen>
   }
 
   Future<void> _activate() async {
-    if (_confirming) return;
-    final entry = _entries[_selected];
+    if (_confirming || widget.preview) return;
+    final entries = _entries;
+    final entry = entries[_safeIndex(entries)];
     if (widget.animated && !_reduceMotion) {
       setState(() => _confirming = true);
       await Future<void>.delayed(_confirmFlash);
@@ -149,7 +162,10 @@ class _MainMenuScreenState extends State<MainMenuScreen>
     Navigator.of(context)
         .push<void>(
           MaterialPageRoute<void>(
-            builder: (_) => FeatureStatusScreen(entry: entry),
+            builder: (_) => FeatureStatusScreen(
+              entry: entry,
+              accent: widget.ui.definition.accent,
+            ),
           ),
         )
         .then((_) {
@@ -204,29 +220,35 @@ class _MainMenuScreenState extends State<MainMenuScreen>
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: widget.developerMode,
+      animation: Listenable.merge([widget.developerMode, widget.ui]),
       builder: (context, _) {
+        final ui = widget.ui.definition;
         final entries = _entries;
-        final selected =
-            _selected >= entries.length ? entries.length - 1 : _selected;
+        final selected = _safeIndex(entries);
         final entry = entries[selected];
         return Scaffold(
           body: Stack(
             children: [
               Positioned.fill(
-                child: MenuBackground(beat: _beat, running: _beat.isAnimating),
+                child: MenuBackground(
+                  beat: _beat,
+                  running: _beat.isAnimating,
+                  accent: ui.accent,
+                  style: ui.background,
+                ),
               ),
               Focus(
                 focusNode: _focus,
-                autofocus: true,
+                autofocus: !widget.preview,
+                canRequestFocus: !widget.preview,
                 onKeyEvent: _onKey,
                 child: SafeArea(
                   child: LayoutBuilder(
                     builder: (context, constraints) {
                       final wide = constraints.maxWidth >= _wideBreakpoint;
                       return wide
-                          ? _buildWide(entries, selected, entry)
-                          : _buildNarrow(entries, selected, entry);
+                          ? _buildWide(entries, selected, entry, ui)
+                          : _buildNarrow(entries, selected, entry, ui);
                     },
                   ),
                 ),
@@ -238,7 +260,12 @@ class _MainMenuScreenState extends State<MainMenuScreen>
     );
   }
 
-  Widget _buildWide(List<MenuEntry> entries, int selected, MenuEntry entry) {
+  Widget _buildWide(
+    List<MenuEntry> entries,
+    int selected,
+    MenuEntry entry,
+    LauncherUiDefinition ui,
+  ) {
     return Row(
       children: [
         Expanded(
@@ -246,30 +273,44 @@ class _MainMenuScreenState extends State<MainMenuScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Padding(
-                padding: EdgeInsets.fromLTRB(FnfSpace.xl, FnfSpace.xl, FnfSpace.xl, FnfSpace.lg),
-                child: _Wordmark(),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(FnfSpace.xl, FnfSpace.xl, FnfSpace.xl, FnfSpace.lg),
+                child: _Wordmark(
+                  top: ui.wordmarkTop,
+                  main: ui.wordmarkMain,
+                  accent: ui.accent,
+                ),
               ),
-              Expanded(child: _buildList(entries, selected)),
+              Expanded(child: _buildList(entries, selected, ui)),
               _buildFooter(),
             ],
           ),
         ),
         Container(width: 1, color: FnfColors.line),
-        Expanded(flex: 4, child: _DetailPanel(entry: entry)),
+        Expanded(flex: 4, child: _DetailPanel(entry: entry, accent: ui.accent)),
       ],
     );
   }
 
-  Widget _buildNarrow(List<MenuEntry> entries, int selected, MenuEntry entry) {
+  Widget _buildNarrow(
+    List<MenuEntry> entries,
+    int selected,
+    MenuEntry entry,
+    LauncherUiDefinition ui,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(FnfSpace.lg, FnfSpace.lg, FnfSpace.lg, FnfSpace.md),
-          child: _Wordmark(compact: true),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(FnfSpace.lg, FnfSpace.lg, FnfSpace.lg, FnfSpace.md),
+          child: _Wordmark(
+            top: ui.wordmarkTop,
+            main: ui.wordmarkMain,
+            accent: ui.accent,
+            compact: true,
+          ),
         ),
-        Expanded(child: _buildList(entries, selected)),
+        Expanded(child: _buildList(entries, selected, ui)),
         Padding(
           key: const ValueKey('menu-summary'),
           padding: const EdgeInsets.symmetric(horizontal: FnfSpace.lg, vertical: FnfSpace.sm),
@@ -278,14 +319,14 @@ class _MainMenuScreenState extends State<MainMenuScreen>
             style: FnfType.body.copyWith(color: FnfColors.textMuted),
           ),
         ),
-        if (_touch) _buildTouchPad(),
+        if (_touch) _buildTouchPad(ui.accent),
         _buildFooter(),
       ],
     );
   }
 
-  Widget _buildList(List<MenuEntry> entries, int selected) {
-    final running = _beat.isAnimating;
+  Widget _buildList(List<MenuEntry> entries, int selected, LauncherUiDefinition ui) {
+    final bop = _beat.isAnimating && ui.beatBop;
     return ListView.builder(
       controller: _scroll,
       itemExtent: _itemExtent,
@@ -295,7 +336,8 @@ class _MainMenuScreenState extends State<MainMenuScreen>
         selected: index == selected,
         confirming: _confirming && index == selected,
         beat: _beat,
-        running: running,
+        bop: bop,
+        accent: ui.accent,
         onTap: () {
           setState(() => _selected = index);
           _activate();
@@ -304,7 +346,7 @@ class _MainMenuScreenState extends State<MainMenuScreen>
     );
   }
 
-  Widget _buildTouchPad() {
+  Widget _buildTouchPad(Color accent) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: FnfSpace.md, vertical: FnfSpace.sm),
       child: Row(
@@ -314,6 +356,7 @@ class _MainMenuScreenState extends State<MainMenuScreen>
               key: const ValueKey('pad-up'),
               icon: Icons.keyboard_arrow_up,
               label: 'Previous entry',
+              accent: accent,
               onPressed: () => _move(-1),
             ),
           ),
@@ -323,6 +366,7 @@ class _MainMenuScreenState extends State<MainMenuScreen>
               key: const ValueKey('pad-down'),
               icon: Icons.keyboard_arrow_down,
               label: 'Next entry',
+              accent: accent,
               onPressed: () => _move(1),
             ),
           ),
@@ -334,6 +378,7 @@ class _MainMenuScreenState extends State<MainMenuScreen>
               icon: Icons.check,
               label: 'Confirm',
               primary: true,
+              accent: accent,
               onPressed: _activate,
             ),
           ),
@@ -372,23 +417,37 @@ class _MainMenuScreenState extends State<MainMenuScreen>
 }
 
 class _Wordmark extends StatelessWidget {
-  const _Wordmark({this.compact = false});
+  const _Wordmark({
+    required this.top,
+    required this.main,
+    required this.accent,
+    this.compact = false,
+  });
 
+  final String top;
+  final String main;
+  final Color accent;
   final bool compact;
 
   @override
   Widget build(BuildContext context) {
+    final title = main.trim().isEmpty ? 'UNIVERSAL' : main.toUpperCase();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('FNF', style: FnfType.eyebrow),
+        Text(top.toUpperCase(), style: FnfType.eyebrow),
         const SizedBox(height: FnfSpace.xs),
-        Text(
-          'UNIVERSAL',
-          style: FnfType.display.copyWith(fontSize: compact ? 38 : 52),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            title,
+            maxLines: 1,
+            style: FnfType.display.copyWith(fontSize: compact ? 38 : 52),
+          ),
         ),
         const SizedBox(height: FnfSpace.sm),
-        Container(width: 72, height: 6, color: FnfColors.accent),
+        Container(width: 72, height: 6, color: accent),
       ],
     );
   }
@@ -400,7 +459,8 @@ class _MenuItem extends StatelessWidget {
     required this.selected,
     required this.confirming,
     required this.beat,
-    required this.running,
+    required this.bop,
+    required this.accent,
     required this.onTap,
   });
 
@@ -408,7 +468,8 @@ class _MenuItem extends StatelessWidget {
   final bool selected;
   final bool confirming;
   final Animation<double> beat;
-  final bool running;
+  final bool bop;
+  final Color accent;
   final VoidCallback onTap;
 
   @override
@@ -422,7 +483,7 @@ class _MenuItem extends StatelessWidget {
       overflow: TextOverflow.ellipsis,
       style: FnfType.menuItem.copyWith(color: textColor),
     );
-    if (selected && running) {
+    if (selected && bop) {
       label = AnimatedBuilder(
         animation: beat,
         child: label,
@@ -446,7 +507,7 @@ class _MenuItem extends StatelessWidget {
           duration: FnfMotion.fast,
           curve: FnfMotion.curve,
           color: confirming
-              ? FnfColors.accent
+              ? accent
               : (selected ? FnfColors.surfaceRaised : Colors.transparent),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -455,7 +516,7 @@ class _MenuItem extends StatelessWidget {
                 duration: FnfMotion.fast,
                 curve: FnfMotion.curve,
                 width: selected ? 8 : 0,
-                color: FnfColors.accent,
+                color: accent,
               ),
               Expanded(
                 child: AnimatedPadding(
@@ -470,7 +531,7 @@ class _MenuItem extends StatelessWidget {
               ),
               Padding(
                 padding: const EdgeInsets.only(right: FnfSpace.md),
-                child: Center(child: StatusTag(status: entry.status)),
+                child: Center(child: StatusTag(status: entry.status, accent: accent)),
               ),
             ],
           ),
@@ -482,14 +543,18 @@ class _MenuItem extends StatelessWidget {
 
 /// Square status label. Accent = works, muted = not built yet.
 class StatusTag extends StatelessWidget {
-  const StatusTag({super.key, required this.status});
+  const StatusTag({
+    super.key,
+    required this.status,
+    this.accent = FnfColors.accent,
+  });
 
   final MenuStatus status;
+  final Color accent;
 
   @override
   Widget build(BuildContext context) {
-    final color =
-        status == MenuStatus.ready ? FnfColors.accent : FnfColors.textMuted;
+    final color = status == MenuStatus.ready ? accent : FnfColors.textMuted;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: FnfSpace.sm, vertical: FnfSpace.xs),
       decoration: BoxDecoration(border: Border.all(color: color)),
@@ -502,9 +567,10 @@ class StatusTag extends StatelessWidget {
 }
 
 class _DetailPanel extends StatelessWidget {
-  const _DetailPanel({required this.entry});
+  const _DetailPanel({required this.entry, required this.accent});
 
   final MenuEntry entry;
+  final Color accent;
 
   @override
   Widget build(BuildContext context) {
@@ -521,7 +587,7 @@ class _DetailPanel extends StatelessWidget {
             const SizedBox(height: FnfSpace.sm),
             Text(entry.label.toUpperCase(), style: FnfType.display.copyWith(fontSize: 40)),
             const SizedBox(height: FnfSpace.md),
-            StatusTag(status: entry.status),
+            StatusTag(status: entry.status, accent: accent),
             const SizedBox(height: FnfSpace.lg),
             Text(entry.summary, style: FnfType.body),
             if (entry.requires != null) ...[
@@ -545,12 +611,14 @@ class _PadButton extends StatelessWidget {
     super.key,
     required this.icon,
     required this.label,
+    required this.accent,
     required this.onPressed,
     this.primary = false,
   });
 
   final IconData icon;
   final String label;
+  final Color accent;
   final VoidCallback onPressed;
   final bool primary;
 
@@ -562,7 +630,7 @@ class _PadButton extends StatelessWidget {
       excludeSemantics: true,
       onTap: onPressed,
       child: Material(
-        color: primary ? FnfColors.accent : FnfColors.surfaceRaised,
+        color: primary ? accent : FnfColors.surfaceRaised,
         child: InkWell(
           onTap: onPressed,
           child: SizedBox(
