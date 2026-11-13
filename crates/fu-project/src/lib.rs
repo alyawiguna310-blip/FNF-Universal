@@ -386,3 +386,7 @@ mod tests {
 
 pub mod stage3d;
 pub use stage3d::{Camera3D, Light3D, LightKind, ModelAsset, ModelFormat, QualitySettings, QualityTier, SceneNode, Stage3DDefinition, StageDimension, Transform3D};
+
+
+pub mod stage3d;
+pub use stage3d::{Camera3D, Light3D, LightKind, ModelAsset, ModelFormat, QualitySettings, QualityTier, SceneNode, Stage3DDefinition, StageDimension, Transform3D};
