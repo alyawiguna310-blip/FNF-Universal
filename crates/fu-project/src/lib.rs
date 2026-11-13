@@ -382,3 +382,7 @@ mod tests {
         assert_eq!(decoded, project);
     }
 }
+
+
+pub mod stage3d;
+pub use stage3d::{Camera3D, Light3D, LightKind, ModelAsset, ModelFormat, QualitySettings, QualityTier, SceneNode, Stage3DDefinition, StageDimension, Transform3D};
