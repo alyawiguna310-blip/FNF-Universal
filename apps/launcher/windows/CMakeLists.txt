@@ -78,8 +78,19 @@ install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   COMPONENT Runtime)
 
-install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
-  COMPONENT Runtime)
+# Bundle the Rust native bridge next to the executable. Build it first with:
+#   cargo build -p fu-bridge --release
+set(FU_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
+set(FU_BRIDGE_DLL "${FU_REPO_ROOT}/target/release/fu_bridge.dll")
+if(NOT EXISTS "${FU_BRIDGE_DLL}")
+  set(FU_BRIDGE_DLL "${FU_REPO_ROOT}/target/debug/fu_bridge.dll")
+endif()
+if(EXISTS "${FU_BRIDGE_DLL}")
+  install(FILES "${FU_BRIDGE_DLL}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    COMPONENT Runtime)
+else()
+  message(WARNING "fu_bridge.dll not found. Run: cargo build -p fu-bridge --release")
+endif()
 
 if(PLUGIN_BUNDLED_LIBRARIES)
   install(FILES "${PLUGIN_BUNDLED_LIBRARIES}"
