@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'developer_mode.dart';
 import 'feature_status_screen.dart';
 import 'fnf_tokens.dart';
+import 'menu_background.dart';
 import 'menu_entry.dart';
 
 /// Keep in sync with apps/launcher/pubspec.yaml until a version source is wired.
@@ -14,9 +15,13 @@ const String kAppVersionLabel = 'v0.1.0';
 /// same selection state.
 ///
 /// - Arrow keys / D-pad: move selection (wraps).
-/// - Enter / controller A: confirm.
+/// - Enter / controller A: confirm (brief accent flash, then opens).
 /// - Escape / controller B: back (inside sub-screens; the root has nowhere to go).
 /// - Touch: tap an entry; optional on-screen up/down/confirm pad.
+///
+/// Motion: animated backdrop plus a beat bop on the selected entry. All of it
+/// stops when the OS asks for reduced motion, when [animated] is false, or
+/// while the menu is covered by another surface.
 class MainMenuScreen extends StatefulWidget {
   const MainMenuScreen({
     super.key,
@@ -24,6 +29,7 @@ class MainMenuScreen extends StatefulWidget {
     required this.onOpenDeveloper,
     this.isActive = true,
     this.showTouchControls,
+    this.animated = true,
   });
 
   final DeveloperModeController developerMode;
@@ -35,19 +41,27 @@ class MainMenuScreen extends StatefulWidget {
   /// Null means: show on Android and iOS only.
   final bool? showTouchControls;
 
+  /// Turns the backdrop and selection motion on or off.
+  final bool animated;
+
   @override
   State<MainMenuScreen> createState() => _MainMenuScreenState();
 }
 
-class _MainMenuScreenState extends State<MainMenuScreen> {
+class _MainMenuScreenState extends State<MainMenuScreen>
+    with SingleTickerProviderStateMixin {
   static const double _itemExtent = 76;
   static const double _wideBreakpoint = 900;
+  static const Duration _confirmFlash = Duration(milliseconds: 140);
 
   final FocusNode _focus = FocusNode(debugLabel: 'main-menu');
   final ScrollController _scroll = ScrollController();
+  late final AnimationController _beat;
   int _selected = 0;
   int _versionTaps = 0;
   DateTime? _lastVersionTap;
+  bool _confirming = false;
+  bool _reduceMotion = false;
 
   List<MenuEntry> get _entries => [
         ...kMainMenuEntries,
@@ -60,15 +74,42 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
           defaultTargetPlatform == TargetPlatform.iOS);
 
   @override
+  void initState() {
+    super.initState();
+    _beat = AnimationController(vsync: this, duration: kMenuBar);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncAnimation();
+  }
+
+  @override
   void didUpdateWidget(MainMenuScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.isActive && !oldWidget.isActive) {
       _focus.requestFocus();
     }
+    _syncAnimation();
+  }
+
+  void _syncAnimation() {
+    _reduceMotion = MediaQuery.of(context).disableAnimations;
+    final shouldRun = widget.animated && widget.isActive && !_reduceMotion;
+    if (shouldRun) {
+      if (!_beat.isAnimating) _beat.repeat();
+    } else if (_beat.isAnimating) {
+      _beat.stop();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _beat.value = 0;
+      });
+    }
   }
 
   @override
   void dispose() {
+    _beat.dispose();
     _focus.dispose();
     _scroll.dispose();
     super.dispose();
@@ -91,12 +132,20 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     _scroll.animateTo(target, duration: FnfMotion.fast, curve: FnfMotion.curve);
   }
 
-  void _activate() {
+  Future<void> _activate() async {
+    if (_confirming) return;
     final entry = _entries[_selected];
+    if (widget.animated && !_reduceMotion) {
+      setState(() => _confirming = true);
+      await Future<void>.delayed(_confirmFlash);
+      if (!mounted) return;
+      setState(() => _confirming = false);
+    }
     if (entry.id == kDeveloperEntry.id) {
       widget.onOpenDeveloper();
       return;
     }
+    if (!mounted) return;
     Navigator.of(context)
         .push<void>(
           MaterialPageRoute<void>(
@@ -162,20 +211,27 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
             _selected >= entries.length ? entries.length - 1 : _selected;
         final entry = entries[selected];
         return Scaffold(
-          body: Focus(
-            focusNode: _focus,
-            autofocus: true,
-            onKeyEvent: _onKey,
-            child: SafeArea(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final wide = constraints.maxWidth >= _wideBreakpoint;
-                  return wide
-                      ? _buildWide(entries, selected, entry)
-                      : _buildNarrow(entries, selected, entry);
-                },
+          body: Stack(
+            children: [
+              Positioned.fill(
+                child: MenuBackground(beat: _beat, running: _beat.isAnimating),
               ),
-            ),
+              Focus(
+                focusNode: _focus,
+                autofocus: true,
+                onKeyEvent: _onKey,
+                child: SafeArea(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final wide = constraints.maxWidth >= _wideBreakpoint;
+                      return wide
+                          ? _buildWide(entries, selected, entry)
+                          : _buildNarrow(entries, selected, entry);
+                    },
+                  ),
+                ),
+              ),
+            ],
           ),
         );
       },
@@ -229,6 +285,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   }
 
   Widget _buildList(List<MenuEntry> entries, int selected) {
+    final running = _beat.isAnimating;
     return ListView.builder(
       controller: _scroll,
       itemExtent: _itemExtent,
@@ -236,6 +293,9 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       itemBuilder: (context, index) => _MenuItem(
         entry: entries[index],
         selected: index == selected,
+        confirming: _confirming && index == selected,
+        beat: _beat,
+        running: running,
         onTap: () {
           setState(() => _selected = index);
           _activate();
@@ -338,15 +398,41 @@ class _MenuItem extends StatelessWidget {
   const _MenuItem({
     required this.entry,
     required this.selected,
+    required this.confirming,
+    required this.beat,
+    required this.running,
     required this.onTap,
   });
 
   final MenuEntry entry;
   final bool selected;
+  final bool confirming;
+  final Animation<double> beat;
+  final bool running;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
+    final textColor = confirming
+        ? FnfColors.onAccent
+        : (selected ? FnfColors.text : FnfColors.textMuted);
+    Widget label = Text(
+      entry.label.toUpperCase(),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: FnfType.menuItem.copyWith(color: textColor),
+    );
+    if (selected && running) {
+      label = AnimatedBuilder(
+        animation: beat,
+        child: label,
+        builder: (context, child) => Transform.scale(
+          scale: 1 + 0.035 * beatPulse(beat.value),
+          alignment: Alignment.centerLeft,
+          child: child,
+        ),
+      );
+    }
     return Semantics(
       button: true,
       selected: selected,
@@ -359,7 +445,9 @@ class _MenuItem extends StatelessWidget {
         child: AnimatedContainer(
           duration: FnfMotion.fast,
           curve: FnfMotion.curve,
-          color: selected ? FnfColors.surfaceRaised : Colors.transparent,
+          color: confirming
+              ? FnfColors.accent
+              : (selected ? FnfColors.surfaceRaised : Colors.transparent),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -376,14 +464,7 @@ class _MenuItem extends StatelessWidget {
                   padding: EdgeInsets.only(left: selected ? FnfSpace.xl : FnfSpace.lg),
                   child: Align(
                     alignment: Alignment.centerLeft,
-                    child: Text(
-                      entry.label.toUpperCase(),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: FnfType.menuItem.copyWith(
-                        color: selected ? FnfColors.text : FnfColors.textMuted,
-                      ),
-                    ),
+                    child: label,
                   ),
                 ),
               ),

@@ -9,10 +9,14 @@ void _useWideScreen(WidgetTester tester) {
   addTearDown(tester.view.reset);
 }
 
+// Motion is switched off in most tests: a looping backdrop never "settles",
+// which would make pumpAndSettle hang. One test below covers the animated path.
+const _still = FnfMenuApp(animated: false);
+
 void main() {
   testWidgets('main menu shows every required entry', (tester) async {
     _useWideScreen(tester);
-    await tester.pumpWidget(const FnfMenuApp());
+    await tester.pumpWidget(_still);
     await tester.pump();
 
     for (final id in ['story', 'freeplay', 'mods', 'settings', 'credits']) {
@@ -23,7 +27,7 @@ void main() {
 
   testWidgets('keyboard: arrows move, Enter opens, Escape returns', (tester) async {
     _useWideScreen(tester);
-    await tester.pumpWidget(const FnfMenuApp());
+    await tester.pumpWidget(_still);
     await tester.pump();
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
@@ -40,7 +44,7 @@ void main() {
 
   testWidgets('touch: tapping an entry opens it and back returns', (tester) async {
     _useWideScreen(tester);
-    await tester.pumpWidget(const FnfMenuApp());
+    await tester.pumpWidget(_still);
     await tester.pump();
 
     await tester.tap(find.byKey(const ValueKey('menu-mods')));
@@ -54,7 +58,7 @@ void main() {
 
   testWidgets('developer mode unlocks the existing studio and returns', (tester) async {
     _useWideScreen(tester);
-    await tester.pumpWidget(const FnfMenuApp());
+    await tester.pumpWidget(_still);
     await tester.pump();
 
     for (var i = 0; i < 7; i++) {
@@ -71,5 +75,16 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('studio-exit')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('menu-story')), findsOneWidget);
+  });
+
+  testWidgets('animated menu: confirm flash, then the entry opens', (tester) async {
+    _useWideScreen(tester);
+    await tester.pumpWidget(const FnfMenuApp());
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byKey(const ValueKey('feature-status-story')), findsOneWidget);
   });
 }

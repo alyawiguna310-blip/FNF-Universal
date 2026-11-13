@@ -9,7 +9,10 @@ import 'main_menu.dart';
 /// workspace (EditorShell in main.dart) is reused unchanged and only reachable
 /// while Developer Mode is unlocked.
 class FnfMenuApp extends StatelessWidget {
-  const FnfMenuApp({super.key});
+  const FnfMenuApp({super.key, this.animated = true});
+
+  /// Turns menu motion (backdrop, beat bop, confirm flash) on or off.
+  final bool animated;
 
   @override
   Widget build(BuildContext context) {
@@ -17,13 +20,15 @@ class FnfMenuApp extends StatelessWidget {
       title: 'FNF Universal',
       debugShowCheckedModeBanner: false,
       theme: buildFnfTheme(),
-      home: const FnfRoot(),
+      home: FnfRoot(animated: animated),
     );
   }
 }
 
 class FnfRoot extends StatefulWidget {
-  const FnfRoot({super.key});
+  const FnfRoot({super.key, this.animated = true});
+
+  final bool animated;
 
   @override
   State<FnfRoot> createState() => _FnfRootState();
@@ -58,6 +63,7 @@ class _FnfRootState extends State<FnfRoot> {
           developerMode: _developerMode,
           onOpenDeveloper: _openStudio,
           isActive: !_studioOpen,
+          animated: widget.animated,
         ),
         _studioBuilt
             ? _StudioHost(onExit: _closeStudio)
