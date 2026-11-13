@@ -158,7 +158,8 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
       animation: widget.developerMode,
       builder: (context, _) {
         final entries = _entries;
-        final selected = _selected.clamp(0, entries.length - 1);
+        final selected =
+            _selected >= entries.length ? entries.length - 1 : _selected;
         final entry = entries[selected];
         return Scaffold(
           body: Focus(
