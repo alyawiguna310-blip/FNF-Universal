@@ -1,6 +1,10 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../export/fnf_paths.dart';
+import 'background_image.dart';
 import 'developer_mode.dart';
 import 'fnf_tokens.dart';
 import 'launcher_ui_controller.dart';
@@ -18,6 +22,7 @@ const _swatches = <Color>[
 ];
 
 const _boxBorder = OutlineInputBorder(borderRadius: BorderRadius.zero);
+const _errorColor = Color(0xFFFF5D5D);
 
 /// Developer Mode tool: edit the launcher menu/UI with a live preview.
 /// Desktop: controls left, preview right. Mobile: preview on top, controls
@@ -179,11 +184,14 @@ class _Controls extends StatelessWidget {
             SegmentedButton<MenuBackgroundStyle>(
               segments: const [
                 ButtonSegment(value: MenuBackgroundStyle.stripes, label: Text('STRIPES')),
+                ButtonSegment(value: MenuBackgroundStyle.image, label: Text('IMAGE')),
                 ButtonSegment(value: MenuBackgroundStyle.plain, label: Text('PLAIN')),
               ],
               selected: {def.background},
               onSelectionChanged: (s) => _set((d) => d.copyWith(background: s.first)),
             ),
+            if (def.background == MenuBackgroundStyle.image)
+              _BackgroundPicker(controller: controller),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Beat bop on the selected entry'),
@@ -200,8 +208,7 @@ class _Controls extends StatelessWidget {
               physics: const NeverScrollableScrollPhysics(),
               buildDefaultDragHandles: false,
               itemCount: def.entries.length,
-              onReorder: (oldIndex, newIndex) {
-                if (newIndex > oldIndex) newIndex -= 1;
+              onReorderItem: (oldIndex, newIndex) {
                 final list = [...controller.definition.entries];
                 final item = list.removeAt(oldIndex);
                 list.insert(newIndex, item);
@@ -251,6 +258,205 @@ class _Controls extends StatelessWidget {
               ],
             ),
             const SizedBox(height: FnfSpace.xl),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Wallpaper chooser. Images live in Documents/FNFUniversal/Backgrounds. Add
+/// one by pasting the full path of an image file (it is copied in, never
+/// moved). A native file picker needs a plugin and comes later.
+class _BackgroundPicker extends StatefulWidget {
+  const _BackgroundPicker({required this.controller});
+
+  final LauncherUiController controller;
+
+  @override
+  State<_BackgroundPicker> createState() => _BackgroundPickerState();
+}
+
+class _BackgroundPickerState extends State<_BackgroundPicker> {
+  final TextEditingController _path = TextEditingController();
+  List<String> _names = const [];
+  Directory? _dir;
+  String _message = '';
+  bool _error = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    _path.dispose();
+    super.dispose();
+  }
+
+  void _say(String text, {bool error = false}) {
+    if (!mounted) return;
+    setState(() {
+      _message = text;
+      _error = error;
+    });
+  }
+
+  Future<void> _refresh() async {
+    try {
+      final names = await widget.controller.listBackgrounds();
+      final dir = await FnfPaths.backgrounds();
+      if (!mounted) return;
+      setState(() {
+        _names = names;
+        _dir = dir;
+      });
+    } catch (e) {
+      _say('Could not read the Backgrounds folder: $e', error: true);
+    }
+  }
+
+  Future<void> _addFromPath() async {
+    final path = _path.text.trim();
+    if (path.isEmpty) return;
+    try {
+      final name = await widget.controller.importBackgroundFile(path);
+      if (name == null) {
+        _say('Saving images is not available here.', error: true);
+        return;
+      }
+      final d = widget.controller.definition;
+      widget.controller.update(
+        d.copyWith(background: MenuBackgroundStyle.image, backgroundImage: name),
+      );
+      _path.clear();
+      await _refresh();
+      _say('Added $name and selected it.');
+    } on BackgroundImportException catch (e) {
+      _say(e.message, error: true);
+    } catch (e) {
+      _say('Could not add that image: $e', error: true);
+    }
+  }
+
+  void _choose(String name) {
+    final d = widget.controller.definition;
+    widget.controller.update(
+      d.copyWith(background: MenuBackgroundStyle.image, backgroundImage: name),
+    );
+  }
+
+  Future<void> _openFolder() async {
+    final dir = _dir;
+    if (dir == null || !Platform.isWindows) return;
+    try {
+      await Process.start('explorer.exe', [dir.path]);
+    } catch (e) {
+      _say('Could not open the folder: $e', error: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: widget.controller,
+      builder: (context, _) {
+        final def = widget.controller.definition;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _Heading('WALLPAPER IMAGE'),
+            const Text(
+              'Use images you have the right to use. They are copied into the Backgrounds folder and packed into exported zips (png, jpg or webp, up to 8 MB).',
+              style: FnfType.hint,
+            ),
+            const SizedBox(height: FnfSpace.sm),
+            if (_names.isEmpty)
+              Text(
+                'No images yet. Add one below.',
+                style: FnfType.body.copyWith(color: FnfColors.textMuted),
+              )
+            else
+              for (final n in _names)
+                InkWell(
+                  onTap: () => _choose(n),
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 48),
+                    margin: const EdgeInsets.only(bottom: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: FnfSpace.md),
+                    color: n == def.backgroundImage ? FnfColors.surfaceRaised : FnfColors.surface,
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 4,
+                          height: 24,
+                          color: n == def.backgroundImage ? def.accent : Colors.transparent,
+                        ),
+                        const SizedBox(width: FnfSpace.sm),
+                        Expanded(child: Text(n, overflow: TextOverflow.ellipsis)),
+                      ],
+                    ),
+                  ),
+                ),
+            const SizedBox(height: FnfSpace.sm),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    key: const ValueKey('ui-bg-path'),
+                    controller: _path,
+                    decoration: const InputDecoration(
+                      labelText: 'Full path to an image (png, jpg, webp)',
+                      border: _boxBorder,
+                    ),
+                    onSubmitted: (_) => _addFromPath(),
+                  ),
+                ),
+                const SizedBox(width: FnfSpace.sm),
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(minimumSize: const Size(48, 56), shape: const RoundedRectangleBorder()),
+                  onPressed: _addFromPath,
+                  child: const Text('ADD'),
+                ),
+              ],
+            ),
+            Wrap(
+              spacing: FnfSpace.sm,
+              children: [
+                TextButton.icon(
+                  onPressed: _refresh,
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('REFRESH'),
+                ),
+                if (Platform.isWindows)
+                  TextButton.icon(
+                    onPressed: _openFolder,
+                    icon: const Icon(Icons.folder_open, size: 18),
+                    label: const Text('OPEN FOLDER'),
+                  ),
+              ],
+            ),
+            if (_dir != null) SelectableText(_dir!.path, style: FnfType.hint),
+            if (_message.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: FnfSpace.xs),
+                child: Text(
+                  _message,
+                  style: FnfType.body.copyWith(color: _error ? _errorColor : def.accent),
+                ),
+              ),
+            const SizedBox(height: FnfSpace.md),
+            Text('DARKEN  ${(def.backgroundDim * 100).round()}%', style: FnfType.eyebrow),
+            Slider(
+              value: def.backgroundDim.clamp(0.0, kMaxBackgroundDim).toDouble(),
+              min: 0,
+              max: kMaxBackgroundDim,
+              onChanged: (v) => widget.controller.update(
+                widget.controller.definition.copyWith(backgroundDim: v),
+              ),
+            ),
           ],
         );
       },

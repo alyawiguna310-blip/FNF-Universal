@@ -9,6 +9,9 @@ import 'package:fnf_universal/ui/menu_definition.dart';
 
 Uint8List _b(String s) => Uint8List.fromList(utf8.encode(s));
 
+final Uint8List _png =
+    Uint8List.fromList([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0, 1, 2, 3]);
+
 void main() {
   test('safeRelativePath rejects traversal, absolute and reserved paths', () {
     for (final bad in [
@@ -79,5 +82,41 @@ void main() {
     final report = inspectModPackage(zip);
     expect(report.canImport, isFalse);
     expect(report.errors, isNotEmpty);
+  });
+
+  test('a wallpaper is packaged and reported', () {
+    final ui = LauncherUiDefinition.defaults().copyWith(
+      background: MenuBackgroundStyle.image,
+      backgroundImage: 'wall.png',
+    );
+    final zip = buildModPackage(
+      kind: ModPackageKind.launcherProfile,
+      name: 'Looks',
+      ui: ui,
+      backgroundBytes: _png,
+    );
+    final report = inspectModPackage(zip);
+    expect(report.canImport, isTrue);
+    expect(report.backgroundName, 'wall.png');
+    expect(report.backgroundBytes, _png);
+    expect(report.count(ReportStatus.unsupported), 0);
+  });
+
+  test('a fake image is rejected', () {
+    final ui = LauncherUiDefinition.defaults().copyWith(
+      background: MenuBackgroundStyle.image,
+      backgroundImage: 'wall.png',
+    );
+    final zip = buildZip([
+      ZipEntryData('fnfmod.json', _b('{"format":1,"kind":"launcher-profile","name":"fake","createdUtc":""}')),
+      ZipEntryData('launcher_ui.json', _b(jsonEncode(ui.toJson()))),
+      ZipEntryData('ui/backgrounds/wall.png', _b('definitely not a picture')),
+    ]);
+    final report = inspectModPackage(zip);
+    expect(report.backgroundBytes, isNull);
+    expect(
+      report.items.where((i) => i.path == 'ui/backgrounds/wall.png' && i.status == ReportStatus.unsupported),
+      isNotEmpty,
+    );
   });
 }

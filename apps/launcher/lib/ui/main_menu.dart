@@ -67,6 +67,11 @@ class _MainMenuScreenState extends State<MainMenuScreen>
   final ScrollController _scroll = ScrollController();
   late final AnimationController _beat;
   int _selected = 0;
+
+  /// Bumped on every selection change so the detail panel's fade always gets a
+  /// fresh key (quick A, B, A moves would otherwise reuse a key still fading
+  /// out and crash).
+  int _detailSerial = 0;
   int _versionTaps = 0;
   DateTime? _lastVersionTap;
   bool _confirming = false;
@@ -127,10 +132,16 @@ class _MainMenuScreenState extends State<MainMenuScreen>
     super.dispose();
   }
 
+  void _select(int index) {
+    if (index == _selected) return;
+    _selected = index;
+    _detailSerial++;
+  }
+
   void _move(int delta) {
     final count = _entries.length;
     final next = (((_selected + delta) % count) + count) % count;
-    setState(() => _selected = next);
+    setState(() => _select(next));
     _scrollToSelected();
   }
 
@@ -235,6 +246,8 @@ class _MainMenuScreenState extends State<MainMenuScreen>
                   running: _beat.isAnimating,
                   accent: ui.accent,
                   style: ui.background,
+                  imageBytes: widget.ui.backgroundBytes,
+                  dim: ui.backgroundDim,
                 ),
               ),
               Focus(
@@ -287,7 +300,10 @@ class _MainMenuScreenState extends State<MainMenuScreen>
           ),
         ),
         Container(width: 1, color: FnfColors.line),
-        Expanded(flex: 4, child: _DetailPanel(entry: entry, accent: ui.accent)),
+        Expanded(
+          flex: 4,
+          child: _DetailPanel(entry: entry, accent: ui.accent, serial: _detailSerial),
+        ),
       ],
     );
   }
@@ -339,7 +355,7 @@ class _MainMenuScreenState extends State<MainMenuScreen>
         bop: bop,
         accent: ui.accent,
         onTap: () {
-          setState(() => _selected = index);
+          setState(() => _select(index));
           _activate();
         },
       ),
@@ -567,10 +583,15 @@ class StatusTag extends StatelessWidget {
 }
 
 class _DetailPanel extends StatelessWidget {
-  const _DetailPanel({required this.entry, required this.accent});
+  const _DetailPanel({
+    required this.entry,
+    required this.accent,
+    required this.serial,
+  });
 
   final MenuEntry entry;
   final Color accent;
+  final int serial;
 
   @override
   Widget build(BuildContext context) {
@@ -578,28 +599,35 @@ class _DetailPanel extends StatelessWidget {
       padding: const EdgeInsets.all(FnfSpace.xl),
       child: AnimatedSwitcher(
         duration: FnfMotion.medium,
-        child: Column(
-          key: ValueKey('detail-${entry.id}'),
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text('SELECTED', style: FnfType.eyebrow),
-            const SizedBox(height: FnfSpace.sm),
-            Text(entry.label.toUpperCase(), style: FnfType.display.copyWith(fontSize: 40)),
-            const SizedBox(height: FnfSpace.md),
-            StatusTag(status: entry.status, accent: accent),
-            const SizedBox(height: FnfSpace.lg),
-            Text(entry.summary, style: FnfType.body),
-            if (entry.requires != null) ...[
-              const SizedBox(height: FnfSpace.lg),
-              const Text('WHAT IT NEEDS', style: FnfType.eyebrow),
-              const SizedBox(height: FnfSpace.sm),
-              Text(
-                entry.requires!,
-                style: FnfType.body.copyWith(color: FnfColors.textMuted),
+        child: LayoutBuilder(
+          key: ValueKey('detail-${entry.id}-$serial'),
+          builder: (context, constraints) => SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('SELECTED', style: FnfType.eyebrow),
+                  const SizedBox(height: FnfSpace.sm),
+                  Text(entry.label.toUpperCase(), style: FnfType.display.copyWith(fontSize: 40)),
+                  const SizedBox(height: FnfSpace.md),
+                  StatusTag(status: entry.status, accent: accent),
+                  const SizedBox(height: FnfSpace.lg),
+                  Text(entry.summary, style: FnfType.body),
+                  if (entry.requires != null) ...[
+                    const SizedBox(height: FnfSpace.lg),
+                    const Text('WHAT IT NEEDS', style: FnfType.eyebrow),
+                    const SizedBox(height: FnfSpace.sm),
+                    Text(
+                      entry.requires!,
+                      style: FnfType.body.copyWith(color: FnfColors.textMuted),
+                    ),
+                  ],
+                ],
               ),
-            ],
-          ],
+            ),
+          ),
         ),
       ),
     );

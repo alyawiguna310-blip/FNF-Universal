@@ -2,16 +2,19 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../ui/background_image.dart';
 import '../ui/menu_definition.dart';
 import 'zip_io.dart';
 
 /// FNF Universal package: one zip that carries a project, all its scripts and
-/// the menu/UI changes. See docs/MOD_PACKAGE_FORMAT.md.
+/// the menu/UI changes (including the wallpaper). See
+/// docs/MOD_PACKAGE_FORMAT.md.
 ///
 /// Safety rules (from docs/SECURITY_AND_IMPORT.md):
 /// - Nothing in a package is ever executed or converted during inspection.
 /// - Import writes a fresh copy into its own folder. It never overwrites.
 /// - Unsafe paths and executable/binary file types are never extracted.
+/// - Wallpapers must be real png/jpg/webp files (header checked), max 8 MB.
 const int kModPackageFormat = 1;
 
 enum ModPackageKind {
@@ -99,12 +102,19 @@ class ModPackageReport {
     required this.items,
     required this.errors,
     required this.ui,
+    this.backgroundName,
+    this.backgroundBytes,
   });
 
   final ModManifest? manifest;
   final List<ReportItem> items;
   final List<String> errors;
   final LauncherUiParseResult? ui;
+
+  /// The wallpaper the menu/UI points at, and its (validated) bytes, when the
+  /// package carries it.
+  final String? backgroundName;
+  final Uint8List? backgroundBytes;
 
   bool get canImport => manifest != null && errors.isEmpty;
 
@@ -175,12 +185,21 @@ String safeFileStem(String name) {
   return cleaned.length > 60 ? cleaned.substring(0, 60) : cleaned;
 }
 
+const String _backgroundPrefix = 'ui/backgrounds/';
+
 ReportItem _classify(String safePath) {
   if (safePath == 'fnfmod.json') {
     return ReportItem(safePath, ReportStatus.supported, 'Package manifest.');
   }
   if (safePath == 'launcher_ui.json') {
     return ReportItem(safePath, ReportStatus.supported, 'Menu/UI definition (applied only when you choose).');
+  }
+  if (safePath.startsWith(_backgroundPrefix)) {
+    final parts = safePath.split('/');
+    if (parts.length == 3 && cleanBackgroundName(parts[2]) != null) {
+      return ReportItem(safePath, ReportStatus.supported, 'Menu wallpaper image (installed only when you apply the menu/UI).');
+    }
+    return ReportItem(safePath, ReportStatus.unsupported, 'Not a valid wallpaper file name. Ignored.');
   }
   if (safePath.startsWith('project/') && safePath.endsWith('.fnfup.json')) {
     return ReportItem(safePath, ReportStatus.supported, 'Editor project, copied as-is.');
@@ -211,6 +230,7 @@ Uint8List buildModPackage({
   required LauncherUiDefinition ui,
   String? projectJson,
   Map<String, Uint8List> scripts = const {},
+  Uint8List? backgroundBytes,
   DateTime? nowUtc,
 }) {
   final manifest = ModManifest(
@@ -223,6 +243,16 @@ Uint8List buildModPackage({
     ZipEntryData('fnfmod.json', _pretty(manifest.toJson())),
     ZipEntryData('launcher_ui.json', _pretty(ui.toJson())),
   ];
+  final bgName = ui.backgroundImage;
+  if (ui.background == MenuBackgroundStyle.image &&
+      bgName != null &&
+      backgroundBytes != null) {
+    if (backgroundBytes.length > kMaxBackgroundBytes ||
+        !looksLikeImage(backgroundBytes)) {
+      throw ArgumentError('The wallpaper is not a valid png/jpg/webp image under 8 MB.');
+    }
+    entries.add(ZipEntryData('$_backgroundPrefix$bgName', backgroundBytes));
+  }
   if (kind == ModPackageKind.mod) {
     if (projectJson != null) {
       entries.add(ZipEntryData(
@@ -324,6 +354,7 @@ ModPackageReport inspectModPackage(Uint8List zip) {
   }
 
   LauncherUiParseResult? ui;
+  final backgrounds = <String, Uint8List>{};
   for (final entry in entries) {
     if (entry.isDirectory) continue;
     final safe = safeRelativePath(entry.path);
@@ -348,10 +379,39 @@ ModPackageReport inspectModPackage(Uint8List zip) {
       } on FormatException {
         item = ReportItem(safe, ReportStatus.unsupported, 'Not valid JSON. Ignored.');
       }
+    } else if (safe.startsWith(_backgroundPrefix) &&
+        item.status == ReportStatus.supported) {
+      try {
+        final bytes = readZipEntry(zip, entry);
+        if (bytes.length > kMaxBackgroundBytes || !looksLikeImage(bytes)) {
+          item = ReportItem(safe, ReportStatus.unsupported, 'Not a real png, jpg or webp image under 8 MB. Skipped.');
+        } else {
+          backgrounds[safe.split('/').last] = bytes;
+        }
+      } on ZipFormatException catch (e) {
+        item = ReportItem(safe, ReportStatus.unsupported, e.message);
+      }
     }
     items.add(item);
   }
-  return ModPackageReport(manifest: manifest, items: items, errors: errors, ui: ui);
+
+  final wallpaperName = ui?.definition.backgroundImage;
+  final wallpaperBytes = wallpaperName == null ? null : backgrounds[wallpaperName];
+  if (wallpaperName != null && wallpaperBytes == null) {
+    items.add(ReportItem(
+      '$_backgroundPrefix$wallpaperName',
+      ReportStatus.needsAttention,
+      'The menu points at this wallpaper but it is not in the package. Stripes are used instead.',
+    ));
+  }
+  return ModPackageReport(
+    manifest: manifest,
+    items: items,
+    errors: errors,
+    ui: ui,
+    backgroundName: wallpaperBytes == null ? null : wallpaperName,
+    backgroundBytes: wallpaperBytes,
+  );
 }
 
 class ImportResult {
@@ -406,9 +466,15 @@ Future<ImportResult> importModPackage(
       skipped++;
       continue;
     }
+    final bytes = readZipEntry(zip, entry);
+    if (safe.startsWith(_backgroundPrefix) &&
+        (bytes.length > kMaxBackgroundBytes || !looksLikeImage(bytes))) {
+      skipped++;
+      continue;
+    }
     final file = File('${target.path}/$safe');
     await file.parent.create(recursive: true);
-    await file.writeAsBytes(readZipEntry(zip, entry), flush: true);
+    await file.writeAsBytes(bytes, flush: true);
     written++;
   }
   return ImportResult(target, written, skipped);

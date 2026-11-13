@@ -52,6 +52,26 @@ void main() {
     expect(find.byKey(const ValueKey('menu-story')), findsOneWidget);
   });
 
+  testWidgets('moving the selection back and forth quickly does not crash', (tester) async {
+    _useWideScreen(tester);
+    await tester.pumpWidget(_still());
+    await tester.pump();
+
+    // Story -> Freeplay -> Story -> Freeplay inside one fade: used to throw
+    // "Duplicate keys found" in the detail panel.
+    for (final key in [
+      LogicalKeyboardKey.arrowDown,
+      LogicalKeyboardKey.arrowUp,
+      LogicalKeyboardKey.arrowDown,
+      LogicalKeyboardKey.arrowUp,
+    ]) {
+      await tester.sendKeyEvent(key);
+      await tester.pump(const Duration(milliseconds: 40));
+    }
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('touch: tapping an entry opens it and back returns', (tester) async {
     _useWideScreen(tester);
     await tester.pumpWidget(_still());
@@ -126,6 +146,6 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('dev-tab-menuUi')));
     await tester.pumpAndSettle();
     expect(find.text('LIVE PREVIEW'), findsOneWidget);
-    expect(find.byKey(const ValueKey('ui-save')), findsOneWidget);
+    expect(find.text('MENU / UI EDITOR'), findsOneWidget);
   });
 }

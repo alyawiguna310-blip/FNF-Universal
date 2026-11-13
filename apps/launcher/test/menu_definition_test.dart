@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fnf_universal/ui/background_image.dart';
 import 'package:fnf_universal/ui/menu_definition.dart';
 import 'package:fnf_universal/ui/menu_entry.dart';
 
@@ -71,5 +73,45 @@ void main() {
     expect(story.label, 'READY GAME');
     expect(story.status, MenuStatus.planned);
     expect(story.requires, isNotNull);
+  });
+
+  test('wallpaper names must be plain image file names', () {
+    for (final bad in ['../x.png', 'a/b.png', r'a\b.png', 'run.exe', 'noext', 'CON.png', '.hidden.png', '']) {
+      expect(cleanBackgroundName(bad), isNull, reason: bad);
+    }
+    expect(cleanBackgroundName('wall paper-1.PNG'), 'wall paper-1.PNG');
+    expect(sanitizeBackgroundName('my pic (1).jpg'), 'my pic _1_.jpg');
+  });
+
+  test('image style without a valid wallpaper falls back to stripes', () {
+    final r = LauncherUiDefinition.parse({
+      'background': 'image',
+      'backgroundImage': '../x.png',
+      'backgroundDim': 5,
+    });
+    expect(r.definition.background, MenuBackgroundStyle.stripes);
+    expect(r.definition.backgroundImage, isNull);
+    expect(r.definition.backgroundDim, kMaxBackgroundDim);
+    expect(r.warnings.length, greaterThanOrEqualTo(2));
+  });
+
+  test('a valid wallpaper survives a round trip', () {
+    final d = LauncherUiDefinition.defaults().copyWith(
+      background: MenuBackgroundStyle.image,
+      backgroundImage: 'wall.png',
+      backgroundDim: 0.3,
+    );
+    final r = LauncherUiDefinition.parse(jsonDecode(jsonEncode(d.toJson())));
+    expect(r.warnings, isEmpty);
+    expect(r.definition.background, MenuBackgroundStyle.image);
+    expect(r.definition.backgroundImage, 'wall.png');
+    expect(r.definition.backgroundDim, 0.3);
+  });
+
+  test('looksLikeImage checks the header, not the name', () {
+    final png = Uint8List.fromList([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0, 1]);
+    final text = Uint8List.fromList(utf8.encode('this is not an image at all'));
+    expect(looksLikeImage(png), isTrue);
+    expect(looksLikeImage(text), isFalse);
   });
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:typed_data';
 
 import 'fnf_tokens.dart';
 import 'menu_definition.dart';
@@ -18,12 +19,15 @@ double beatPulse(double barPhase) {
   return inv * inv * inv;
 }
 
-/// Original animated backdrop: slow diagonal stripes that scroll one full
-/// stripe per bar (so the loop is seamless) and warm up very slightly on each
-/// beat. Purely decorative, so it is excluded from semantics.
+/// Menu backdrop. Three styles:
+/// - stripes: original diagonal stripes that scroll one stripe per bar and
+///   warm slightly on each beat.
+/// - image: the player's wallpaper, darkened by [dim] so text stays readable.
+///   Falls back to stripes while the image is missing or loading.
+/// - plain: nothing.
 ///
-/// When [running] is false (reduced motion, tests, menu hidden) it paints a
-/// static frame. With [MenuBackgroundStyle.plain] nothing is painted.
+/// Purely decorative, so excluded from semantics. When [running] is false
+/// (reduced motion, tests, menu hidden) it paints a static frame.
 class MenuBackground extends StatelessWidget {
   const MenuBackground({
     super.key,
@@ -31,16 +35,44 @@ class MenuBackground extends StatelessWidget {
     required this.running,
     required this.accent,
     this.style = MenuBackgroundStyle.stripes,
+    this.imageBytes,
+    this.dim = 0.55,
   });
 
   final Animation<double> beat;
   final bool running;
   final Color accent;
   final MenuBackgroundStyle style;
+  final Uint8List? imageBytes;
+  final double dim;
 
   @override
   Widget build(BuildContext context) {
     if (style == MenuBackgroundStyle.plain) return const SizedBox.shrink();
+    final bytes = imageBytes;
+    if (style == MenuBackgroundStyle.image && bytes != null) {
+      return ExcludeSemantics(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.memory(
+              bytes,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+              errorBuilder: (context, error, stack) => const SizedBox.shrink(),
+            ),
+            ColoredBox(color: FnfColors.background.withValues(alpha: dim)),
+            if (running)
+              AnimatedBuilder(
+                animation: beat,
+                builder: (context, _) => ColoredBox(
+                  color: accent.withValues(alpha: beatPulse(beat.value) * 0.06),
+                ),
+              ),
+          ],
+        ),
+      );
+    }
     return ExcludeSemantics(
       child: RepaintBoundary(
         child: AnimatedBuilder(

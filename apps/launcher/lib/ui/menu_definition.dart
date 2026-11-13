@@ -1,5 +1,6 @@
 import 'dart:ui' show Color;
 
+import 'background_image.dart';
 import 'fnf_tokens.dart';
 import 'menu_entry.dart';
 
@@ -12,7 +13,7 @@ const int kMaxWordmarkLength = 16;
 const int kMaxLabelLength = 24;
 const int kMaxSummaryLength = 120;
 
-enum MenuBackgroundStyle { stripes, plain }
+enum MenuBackgroundStyle { stripes, plain, image }
 
 String colorToHex(Color c) =>
     '#${(c.toARGB32() & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}';
@@ -71,6 +72,8 @@ class LauncherUiDefinition {
     required this.background,
     required this.beatBop,
     required this.entries,
+    this.backgroundImage,
+    this.backgroundDim = 0.55,
   });
 
   factory LauncherUiDefinition.defaults() => LauncherUiDefinition(
@@ -89,6 +92,12 @@ class LauncherUiDefinition {
   final String wordmarkMain;
   final Color accent;
   final MenuBackgroundStyle background;
+
+  /// Plain file name of a wallpaper inside the Backgrounds folder, or null.
+  final String? backgroundImage;
+
+  /// How much the wallpaper is darkened so text stays readable (0 to 0.85).
+  final double backgroundDim;
   final bool beatBop;
   final List<MenuEntryDef> entries;
 
@@ -97,6 +106,9 @@ class LauncherUiDefinition {
     String? wordmarkMain,
     Color? accent,
     MenuBackgroundStyle? background,
+    String? backgroundImage,
+    bool clearBackgroundImage = false,
+    double? backgroundDim,
     bool? beatBop,
     List<MenuEntryDef>? entries,
   }) =>
@@ -105,6 +117,9 @@ class LauncherUiDefinition {
         wordmarkMain: wordmarkMain ?? this.wordmarkMain,
         accent: accent ?? this.accent,
         background: background ?? this.background,
+        backgroundImage:
+            clearBackgroundImage ? null : (backgroundImage ?? this.backgroundImage),
+        backgroundDim: backgroundDim ?? this.backgroundDim,
         beatBop: beatBop ?? this.beatBop,
         entries: entries ?? this.entries,
       );
@@ -115,6 +130,8 @@ class LauncherUiDefinition {
         'wordmarkMain': wordmarkMain,
         'accent': colorToHex(accent),
         'background': background.name,
+        if (backgroundImage != null) 'backgroundImage': backgroundImage,
+        'backgroundDim': backgroundDim,
         'beatBop': beatBop,
         'entries': entries.map((e) => e.toJson()).toList(),
       };
@@ -159,9 +176,24 @@ class LauncherUiDefinition {
       }
     }
 
-    final background =
+    var background =
         MenuBackgroundStyle.values.asNameMap()[raw['background']] ??
             defaults.background;
+    String? image;
+    if (raw['backgroundImage'] != null) {
+      image = cleanBackgroundName(raw['backgroundImage']);
+      if (image == null) {
+        warnings.add('Wallpaper name is not allowed (plain file name ending in png, jpg or webp). It was ignored.');
+      }
+    }
+    if (background == MenuBackgroundStyle.image && image == null) {
+      background = defaults.background;
+      warnings.add('Background is set to image but no valid wallpaper is named. Stripes are used instead.');
+    }
+    final dimRaw = raw['backgroundDim'];
+    final dim = dimRaw is num
+        ? dimRaw.toDouble().clamp(0.0, kMaxBackgroundDim).toDouble()
+        : defaults.backgroundDim;
     final beatBop = raw['beatBop'] is bool ? raw['beatBop'] as bool : true;
 
     final entries = <MenuEntryDef>[];
@@ -210,6 +242,8 @@ class LauncherUiDefinition {
         wordmarkMain: text(raw['wordmarkMain'], defaults.wordmarkMain, kMaxWordmarkLength, 'Title'),
         accent: accent,
         background: background,
+        backgroundImage: image,
+        backgroundDim: dim,
         beatBop: beatBop,
         entries: entries,
       ),

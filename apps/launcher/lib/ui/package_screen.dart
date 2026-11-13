@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +7,7 @@ import '../export/fnf_paths.dart';
 import '../export/mod_package.dart';
 import 'fnf_tokens.dart';
 import 'launcher_ui_controller.dart';
+import 'menu_definition.dart';
 
 enum _PackageMode { export, import }
 
@@ -15,8 +15,8 @@ const _warnColor = Color(0xFFFFC53D);
 const _errorColor = Color(0xFFFF5D5D);
 const _boxBorder = OutlineInputBorder(borderRadius: BorderRadius.zero);
 
-/// Developer Mode tool: export a mod (project + scripts + menu/UI) or a
-/// launcher profile as one zip, and inspect/import zips safely.
+/// Developer Mode tool: export a mod (project + scripts + menu/UI + wallpaper)
+/// or a launcher profile as one zip, and inspect/import zips safely.
 class PackageScreen extends StatefulWidget {
   const PackageScreen({super.key, required this.ui});
 
@@ -163,6 +163,7 @@ class _PackageScreenState extends State<PackageScreen> {
           ui: widget.ui.definition,
           projectJson: await project.readAsString(),
           scripts: scripts,
+          backgroundBytes: widget.ui.backgroundBytes,
         );
         fileName = '${safeFileStem(stem)}.fnfmod.zip';
       } else {
@@ -172,13 +173,18 @@ class _PackageScreenState extends State<PackageScreen> {
           kind: ModPackageKind.launcherProfile,
           name: name,
           ui: widget.ui.definition,
+          backgroundBytes: widget.ui.backgroundBytes,
         );
         fileName = '${safeFileStem(name)}.fnflauncher.zip';
       }
       final file = await _uniqueFile(exports, fileName);
       await file.writeAsBytes(bytes, flush: true);
       final unsaved = widget.ui.hasUnsavedChanges ? ' It includes your unsaved menu/UI edits.' : '';
-      _setStatus('Exported ${bytes.length} bytes to ${file.path}.$unsaved');
+      final def = widget.ui.definition;
+      final noWallpaper = def.background == MenuBackgroundStyle.image && widget.ui.backgroundBytes == null
+          ? ' The wallpaper image could not be read, so it is not in the zip.'
+          : '';
+      _setStatus('Exported ${bytes.length} bytes to ${file.path}.$unsaved$noWallpaper');
       await _refresh();
     } catch (e) {
       _setStatus('Export failed: $e', error: true);
@@ -235,11 +241,31 @@ class _PackageScreenState extends State<PackageScreen> {
     }
   }
 
-  void _applyUi() {
-    final parsed = _report?.ui;
-    if (parsed == null) return;
-    widget.ui.replace(parsed.definition, warnings: parsed.warnings);
-    _setStatus('Applied the package menu/UI. Review it in the MENU/UI tab, then press Save to keep it.');
+  Future<void> _applyUi() async {
+    final report = _report;
+    final parsed = report?.ui;
+    if (report == null || parsed == null) return;
+    var def = parsed.definition;
+    final notes = [...parsed.warnings];
+    if (def.background == MenuBackgroundStyle.image) {
+      String? installed;
+      final name = report.backgroundName;
+      final bytes = report.backgroundBytes;
+      if (name != null && bytes != null) {
+        installed = await widget.ui.installBackground(name, bytes);
+      }
+      if (installed != null) {
+        def = def.copyWith(backgroundImage: installed);
+      } else {
+        def = def.copyWith(
+          background: MenuBackgroundStyle.stripes,
+          clearBackgroundImage: true,
+        );
+        notes.add('The wallpaper could not be installed, so stripes are used.');
+      }
+    }
+    widget.ui.replace(def, warnings: notes);
+    _setStatus('Applied the package menu/UI. Review it in the MENU / UI tab, then press Save to keep it.');
   }
 
   Future<void> _openFolder(Directory? dir) async {
@@ -327,8 +353,8 @@ class _PackageScreenState extends State<PackageScreen> {
       const SizedBox(height: FnfSpace.sm),
       Text(
         _kind == ModPackageKind.mod
-            ? 'One zip with your saved project, every script file and the current menu/UI. Scripts are copied as files, not run and not converted.'
-            : 'Only the menu/UI and name. Import it on another FNF Universal install to rebrand it. A standalone APK/EXE build is a later step.',
+            ? 'One zip with your saved project, every script file and the current menu/UI (wallpaper included). Scripts are copied as files, not run and not converted.'
+            : 'Only the menu/UI (wallpaper included) and name. Import it on another FNF Universal install to rebrand it. A standalone APK/EXE build is a later step.',
         style: FnfType.body.copyWith(color: FnfColors.textMuted),
       ),
       const SizedBox(height: FnfSpace.lg),
