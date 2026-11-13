@@ -137,3 +137,7 @@ mod tests {
         assert!(sample().supports("android"));
     }
 }
+
+
+pub mod devtools;
+pub use devtools::{LogBuffer, LogEntry, LogLevel};
