@@ -24,13 +24,14 @@ class FreeplayScreen extends StatelessWidget {
       itemsOf: (ContentCatalog catalog) => [
         for (final s in catalog.freeplaySongs)
           BrowseItem(
-            id: s.id,
+            id: '${s.origin ?? ''}/${s.id}',
             title: s.title,
-            subtitle: s.artist,
+            subtitle: s.artist ?? s.origin,
             chips: s.difficulties,
             facts: [
               if (s.bpm != null) (label: 'BPM', value: s.bpm!.round().toString()),
               (label: 'ID', value: s.id),
+              if (s.origin != null) (label: 'FROM', value: s.origin!),
             ],
           ),
       ],
@@ -57,9 +58,10 @@ class StoryScreen extends StatelessWidget {
       itemsOf: (ContentCatalog catalog) => [
         for (final level in catalog.storyLevels)
           BrowseItem(
-            id: level.id,
+            id: '${level.origin ?? ''}/${level.id}',
             title: level.name,
-            subtitle: '${level.songIds.length} song(s)',
+            subtitle: '${level.songIds.length} song(s)'
+                '${level.origin == null ? '' : '  \u00b7  ${level.origin}'}',
             facts: [
               (
                 label: 'SONGS',
@@ -69,6 +71,7 @@ class StoryScreen extends StatelessWidget {
                         .map((id) => catalog.songs[id]?.title ?? id)
                         .join('  /  '),
               ),
+              if (level.origin != null) (label: 'FROM', value: level.origin!),
             ],
           ),
       ],

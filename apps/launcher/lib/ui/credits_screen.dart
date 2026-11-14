@@ -24,12 +24,16 @@ const List<CreditSection> kCreditSections = [
     'FNF Universal is an independent project. It is not affiliated with or endorsed by them.',
     'Please support the original game: github.com/FunkinCrew/Funkin',
   ]),
+  CreditSection('CODENAME ENGINE', [
+    'Codename Engine is made by the CodenameCrew. FNF Universal can list the weeks and songs of Codename mods you already have. It is not affiliated with or endorsed by them.',
+    'github.com/CodenameCrew/CodenameEngine',
+  ]),
   CreditSection('NO GAME CONTENT INCLUDED', [
-    'This app does not bundle the original game\u2019s music, art or charts. Point it at your own copy of the game, or at a mod folder you have the right to use.',
+    'This app does not bundle the original game\u2019s music, art or charts, or any mod. Point it at your own copy of the game, or at a mod folder you have the right to use.',
   ]),
   CreditSection('DOCUMENTATION', [
-    'Level and song data layouts follow the Funkin\u2019 Modding Docs, licensed CC BY-SA 4.0.',
-    'funkincrew.github.io/funkin-modding-docs',
+    'Level and song data layouts follow the Funkin\u2019 Modding Docs, licensed CC BY-SA 4.0: funkincrew.github.io/funkin-modding-docs',
+    'Codename mod layouts follow the Codename Engine wiki: codename-engine.com/wiki',
   ]),
   CreditSection('LICENSES', [
     'See LICENSES.md in the repository for every license that applies.',
