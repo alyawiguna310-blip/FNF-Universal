@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fnf_universal/content/content_catalog.dart';
+import 'package:fnf_universal/content/content_controller.dart';
 import 'package:fnf_universal/ui/fnf_app.dart';
 import 'package:fnf_universal/ui/launcher_ui_controller.dart';
 
@@ -10,10 +12,28 @@ void _useWideScreen(WidgetTester tester) {
   addTearDown(tester.view.reset);
 }
 
+const _sample = ContentCatalog(
+  levels: [
+    LevelInfo(id: 'week-1', name: 'Week One', songIds: ['alpha']),
+  ],
+  songs: {
+    'alpha': SongInfo(
+      id: 'alpha',
+      title: 'Alpha Song',
+      artist: 'Someone',
+      difficulties: ['easy', 'hard'],
+      bpm: 120,
+    ),
+  },
+);
+
 // Motion is switched off in most tests: a looping backdrop never "settles",
 // which would make pumpAndSettle hang. One test below covers the animated path.
-Widget _still({LauncherUiController? ui}) =>
-    FnfMenuApp(animated: false, uiController: ui ?? LauncherUiController());
+Widget _still({LauncherUiController? ui, ContentController? content}) => FnfMenuApp(
+      animated: false,
+      uiController: ui ?? LauncherUiController(),
+      contentController: content ?? ContentController(),
+    );
 
 Future<void> _unlockDeveloper(WidgetTester tester) async {
   for (var i = 0; i < 7; i++) {
@@ -35,21 +55,58 @@ void main() {
     expect(find.byKey(const ValueKey('menu-developer')), findsNothing);
   });
 
-  testWidgets('keyboard: arrows move, Enter opens, Escape returns', (tester) async {
+  testWidgets('keyboard: Freeplay lists songs from the content catalog, Escape returns', (tester) async {
     _useWideScreen(tester);
-    await tester.pumpWidget(_still());
+    await tester.pumpWidget(_still(content: ContentController(initial: _sample)));
     await tester.pump();
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('feature-status-freeplay')), findsOneWidget);
+    expect(find.byKey(const ValueKey('browse-freeplay')), findsOneWidget);
+    expect(find.text('ALPHA SONG'), findsWidgets);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('feature-status-freeplay')), findsNothing);
+    expect(find.byKey(const ValueKey('browse-freeplay')), findsNothing);
     expect(find.byKey(const ValueKey('menu-story')), findsOneWidget);
+  });
+
+  testWidgets('Story lists the visible levels and says so when there is nothing yet', (tester) async {
+    _useWideScreen(tester);
+    await tester.pumpWidget(_still(content: ContentController(initial: _sample)));
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('menu-story')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('browse-story')), findsOneWidget);
+    expect(find.text('WEEK ONE'), findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('browse-back')));
+    await tester.pumpAndSettle();
+
+    // Same screen with an empty catalog: honest empty state, no fake weeks.
+    await tester.pumpWidget(_still());
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('menu-story')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('No story levels yet'), findsOneWidget);
+  });
+
+  testWidgets('Credits credits The Funkin Crew and says no game content is bundled', (tester) async {
+    _useWideScreen(tester);
+    await tester.pumpWidget(_still());
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('menu-credits')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('credits-screen')), findsOneWidget);
+    expect(find.textContaining('The Funkin\u2019 Crew Inc.'), findsWidgets);
+    expect(find.textContaining('does not bundle'), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('credits-screen')), findsNothing);
   });
 
   testWidgets('moving the selection back and forth quickly does not crash', (tester) async {
@@ -57,8 +114,6 @@ void main() {
     await tester.pumpWidget(_still());
     await tester.pump();
 
-    // Story -> Freeplay -> Story -> Freeplay inside one fade: used to throw
-    // "Duplicate keys found" in the detail panel.
     for (final key in [
       LogicalKeyboardKey.arrowDown,
       LogicalKeyboardKey.arrowUp,
@@ -105,13 +160,16 @@ void main() {
 
   testWidgets('animated menu: confirm flash, then the entry opens', (tester) async {
     _useWideScreen(tester);
-    await tester.pumpWidget(FnfMenuApp(uiController: LauncherUiController()));
+    await tester.pumpWidget(FnfMenuApp(
+      uiController: LauncherUiController(),
+      contentController: ContentController(initial: _sample),
+    ));
     await tester.pump(const Duration(milliseconds: 300));
 
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pump(const Duration(milliseconds: 500));
-    expect(find.byKey(const ValueKey('feature-status-story')), findsOneWidget);
+    expect(find.byKey(const ValueKey('browse-story')), findsOneWidget);
   });
 
   testWidgets('menu follows the launcher UI definition', (tester) async {

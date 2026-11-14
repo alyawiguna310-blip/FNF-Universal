@@ -67,12 +67,13 @@ void main() {
   test('restyling text never changes status or requirements', () {
     final d = LauncherUiDefinition.defaults().copyWith(entries: [
       for (final e in LauncherUiDefinition.defaults().entries)
-        e.id == 'story' ? e.copyWith(label: 'READY GAME', summary: 'Totally works') : e,
+        e.id == 'mods' ? e.copyWith(label: 'READY GAME', summary: 'Totally works') : e,
     ]);
-    final story = resolveMenuEntries(d, developerUnlocked: false).firstWhere((e) => e.id == 'story');
-    expect(story.label, 'READY GAME');
-    expect(story.status, MenuStatus.planned);
-    expect(story.requires, isNotNull);
+    final mods = resolveMenuEntries(d, developerUnlocked: false).firstWhere((e) => e.id == 'mods');
+    expect(mods.label, 'READY GAME');
+    expect(mods.status, builtInEntry('mods')!.status);
+    expect(mods.status, MenuStatus.planned);
+    expect(mods.requires, builtInEntry('mods')!.requires);
   });
 
   test('wallpaper names must be plain image file names', () {

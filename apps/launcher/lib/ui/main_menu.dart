@@ -2,6 +2,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../content/content_controller.dart';
+import 'content_screens.dart';
+import 'credits_screen.dart';
 import 'developer_mode.dart';
 import 'feature_status_screen.dart';
 import 'fnf_tokens.dart';
@@ -30,6 +33,7 @@ class MainMenuScreen extends StatefulWidget {
     required this.developerMode,
     required this.ui,
     required this.onOpenDeveloper,
+    this.content,
     this.isActive = true,
     this.showTouchControls,
     this.animated = true,
@@ -39,6 +43,10 @@ class MainMenuScreen extends StatefulWidget {
   final DeveloperModeController developerMode;
   final LauncherUiController ui;
   final VoidCallback onOpenDeveloper;
+
+  /// Source of weeks and songs for Story and Freeplay. When null those entries
+  /// show their status screen instead.
+  final ContentController? content;
 
   /// False while another surface (Developer tools) is covering the menu.
   final bool isActive;
@@ -155,6 +163,21 @@ class _MainMenuScreenState extends State<MainMenuScreen>
     _scroll.animateTo(target, duration: FnfMotion.fast, curve: FnfMotion.curve);
   }
 
+  Widget _destination(MenuEntry entry) {
+    final accent = widget.ui.definition.accent;
+    final content = widget.content;
+    if (entry.id == 'story' && content != null) {
+      return StoryScreen(content: content, accent: accent);
+    }
+    if (entry.id == 'freeplay' && content != null) {
+      return FreeplayScreen(content: content, accent: accent);
+    }
+    if (entry.id == 'credits') {
+      return CreditsScreen(accent: accent);
+    }
+    return FeatureStatusScreen(entry: entry, accent: accent);
+  }
+
   Future<void> _activate() async {
     if (_confirming || widget.preview) return;
     final entries = _entries;
@@ -171,14 +194,7 @@ class _MainMenuScreenState extends State<MainMenuScreen>
     }
     if (!mounted) return;
     Navigator.of(context)
-        .push<void>(
-          MaterialPageRoute<void>(
-            builder: (_) => FeatureStatusScreen(
-              entry: entry,
-              accent: widget.ui.definition.accent,
-            ),
-          ),
-        )
+        .push<void>(MaterialPageRoute<void>(builder: (_) => _destination(entry)))
         .then((_) {
       if (mounted) _focus.requestFocus();
     });
@@ -557,7 +573,8 @@ class _MenuItem extends StatelessWidget {
   }
 }
 
-/// Square status label. Accent = works, muted = not built yet.
+/// Square status label. Accent = works, amber = partly works, muted = not
+/// built yet.
 class StatusTag extends StatelessWidget {
   const StatusTag({
     super.key,
@@ -570,7 +587,11 @@ class StatusTag extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = status == MenuStatus.ready ? accent : FnfColors.textMuted;
+    final color = switch (status) {
+      MenuStatus.ready => accent,
+      MenuStatus.partial => const Color(0xFFFFC53D),
+      MenuStatus.planned => FnfColors.textMuted,
+    };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: FnfSpace.sm, vertical: FnfSpace.xs),
       decoration: BoxDecoration(border: Border.all(color: color)),

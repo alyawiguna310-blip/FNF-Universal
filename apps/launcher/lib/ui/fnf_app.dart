@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../content/content_controller.dart';
 import '../main.dart' show EditorShell;
 import 'developer_mode.dart';
 import 'fnf_tokens.dart';
@@ -15,14 +16,23 @@ import 'package_screen.dart';
 /// Menu/UI editor and the Package tool, is only reachable while Developer Mode
 /// is unlocked.
 class FnfMenuApp extends StatelessWidget {
-  const FnfMenuApp({super.key, this.animated = true, this.uiController});
+  const FnfMenuApp({
+    super.key,
+    this.animated = true,
+    this.uiController,
+    this.contentController,
+  });
 
   /// Turns menu motion (backdrop, beat bop, confirm flash) on or off.
   final bool animated;
 
   /// Supply one to control the launcher look from outside (tests do). If null,
-  /// the app loads and saves <Documents>/FNFUniversal/launcher_ui.json.
+  /// the app loads and saves launcher_ui.json in Documents/FNFUniversal.
   final LauncherUiController? uiController;
+
+  /// Supply one to control the Story/Freeplay source from outside (tests do).
+  /// If null, the app remembers the chosen folder in Documents/FNFUniversal.
+  final ContentController? contentController;
 
   @override
   Widget build(BuildContext context) {
@@ -30,16 +40,26 @@ class FnfMenuApp extends StatelessWidget {
       title: 'FNF Universal',
       debugShowCheckedModeBanner: false,
       theme: buildFnfTheme(),
-      home: FnfRoot(animated: animated, uiController: uiController),
+      home: FnfRoot(
+        animated: animated,
+        uiController: uiController,
+        contentController: contentController,
+      ),
     );
   }
 }
 
 class FnfRoot extends StatefulWidget {
-  const FnfRoot({super.key, this.animated = true, this.uiController});
+  const FnfRoot({
+    super.key,
+    this.animated = true,
+    this.uiController,
+    this.contentController,
+  });
 
   final bool animated;
   final LauncherUiController? uiController;
+  final ContentController? contentController;
 
   @override
   State<FnfRoot> createState() => _FnfRootState();
@@ -48,23 +68,31 @@ class FnfRoot extends StatefulWidget {
 class _FnfRootState extends State<FnfRoot> {
   final DeveloperModeController _developerMode = DeveloperModeController();
   late final LauncherUiController _ui;
+  late final ContentController _content;
   late final bool _ownsUi;
+  late final bool _ownsContent;
   bool _studioOpen = false;
   bool _studioBuilt = false;
 
   @override
   void initState() {
     super.initState();
-    final supplied = widget.uiController;
-    _ownsUi = supplied == null;
-    _ui = supplied ?? LauncherUiController(storage: FileLauncherUiStorage());
+    final suppliedUi = widget.uiController;
+    _ownsUi = suppliedUi == null;
+    _ui = suppliedUi ?? LauncherUiController(storage: FileLauncherUiStorage());
     if (_ownsUi) unawaited(_ui.load());
+
+    final suppliedContent = widget.contentController;
+    _ownsContent = suppliedContent == null;
+    _content = suppliedContent ?? ContentController(store: FileContentStore());
+    if (_ownsContent) unawaited(_content.load());
   }
 
   @override
   void dispose() {
     _developerMode.dispose();
     if (_ownsUi) _ui.dispose();
+    if (_ownsContent) _content.dispose();
     super.dispose();
   }
 
@@ -85,6 +113,7 @@ class _FnfRootState extends State<FnfRoot> {
         MainMenuScreen(
           developerMode: _developerMode,
           ui: _ui,
+          content: _content,
           onOpenDeveloper: _openStudio,
           isActive: !_studioOpen,
           animated: widget.animated,

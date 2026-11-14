@@ -1,8 +1,9 @@
-enum MenuStatus { ready, planned }
+enum MenuStatus { ready, partial, planned }
 
 extension MenuStatusLabel on MenuStatus {
   String get label => switch (this) {
         MenuStatus.ready => 'Ready',
+        MenuStatus.partial => 'Browse only',
         MenuStatus.planned => 'Not in this build',
       };
 }
@@ -22,7 +23,7 @@ class MenuEntry {
   final MenuStatus status;
 
   /// Honest description of what is missing, shown for entries that are not
-  /// built yet. Null when the entry works.
+  /// fully built. Null when the entry works.
   final String? requires;
 
   /// Only text can be restyled. Status and what-it-needs always come from the
@@ -41,17 +42,17 @@ const kMainMenuEntries = <MenuEntry>[
     id: 'story',
     label: 'Story Mode',
     summary: 'Play weeks in order with a fixed song list.',
-    status: MenuStatus.planned,
+    status: MenuStatus.partial,
     requires:
-        'A runtime to launch. The engine adapter launch runner is not implemented yet (ARCHITECTURE.md, adapter lifecycle step 5).',
+        'Browsing reads the weeks in your own FNF folder. Playing needs the engine adapter launch runner, which is not built yet (ARCHITECTURE.md, adapter lifecycle step 5).',
   ),
   MenuEntry(
     id: 'freeplay',
     label: 'Freeplay',
     summary: 'Pick any installed song and difficulty.',
-    status: MenuStatus.planned,
+    status: MenuStatus.partial,
     requires:
-        'The asset index wired into a song browser, plus the same launch runner Story Mode needs.',
+        'Browsing reads the songs in your own FNF folder. Playing needs the same launch runner Story Mode needs.',
   ),
   MenuEntry(
     id: 'mods',
@@ -73,8 +74,7 @@ const kMainMenuEntries = <MenuEntry>[
     id: 'credits',
     label: 'Credits',
     summary: 'Who made it and which licenses apply.',
-    status: MenuStatus.planned,
-    requires: 'A credits screen that reads LICENSES.md. Not built yet.',
+    status: MenuStatus.ready,
   ),
 ];
 
