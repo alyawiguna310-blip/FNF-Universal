@@ -72,7 +72,12 @@ impl Stage3DDefinition {
             if model.path.trim().is_empty() {
                 issues.push(format!("model '{}' has an empty path", model.id));
             }
-            let extension = model.path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+            let extension = model
+                .path
+                .rsplit('.')
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
             let expected = match model.format {
                 ModelFormat::Gltf => "gltf",
                 ModelFormat::Glb => "glb",
@@ -88,7 +93,10 @@ impl Stage3DDefinition {
         let mut node_ids = BTreeSet::new();
         for node in &self.nodes {
             if node.id.trim().is_empty() || !node_ids.insert(node.id.as_str()) {
-                issues.push(format!("scene node id is empty or duplicated: '{}'", node.id));
+                issues.push(format!(
+                    "scene node id is empty or duplicated: '{}'",
+                    node.id
+                ));
             }
             if let Some(asset_id) = &node.model_asset_id {
                 if !model_ids.contains(asset_id.as_str()) {
@@ -99,7 +107,10 @@ impl Stage3DDefinition {
                 }
             }
             if !node.transform.is_finite() {
-                issues.push(format!("scene node '{}' has a non-finite transform", node.id));
+                issues.push(format!(
+                    "scene node '{}' has a non-finite transform",
+                    node.id
+                ));
             }
         }
 
@@ -119,7 +130,11 @@ impl Stage3DDefinition {
             issues.push("quality.maxTextureDimension must be at least 256".into());
         }
 
-        if issues.is_empty() { Ok(()) } else { Err(issues) }
+        if issues.is_empty() {
+            Ok(())
+        } else {
+            Err(issues)
+        }
     }
 }
 
@@ -145,7 +160,9 @@ pub struct SceneNode {
     pub visible: bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -160,15 +177,24 @@ pub struct Transform3D {
 
 impl Default for Transform3D {
     fn default() -> Self {
-        Self { position: [0.0; 3], rotation_degrees: [0.0; 3], scale: default_scale() }
+        Self {
+            position: [0.0; 3],
+            rotation_degrees: [0.0; 3],
+            scale: default_scale(),
+        }
     }
 }
 
-fn default_scale() -> [f32; 3] { [1.0; 3] }
+fn default_scale() -> [f32; 3] {
+    [1.0; 3]
+}
 
 impl Transform3D {
     fn is_finite(&self) -> bool {
-        self.position.iter().chain(self.rotation_degrees.iter()).chain(self.scale.iter())
+        self.position
+            .iter()
+            .chain(self.rotation_degrees.iter())
+            .chain(self.scale.iter())
             .all(|value| value.is_finite())
     }
 }
@@ -200,9 +226,15 @@ impl Default for Camera3D {
     }
 }
 
-fn default_fov() -> f32 { 60.0 }
-fn default_near() -> f32 { 0.1 }
-fn default_far() -> f32 { 1000.0 }
+fn default_fov() -> f32 {
+    60.0
+}
+fn default_near() -> f32 {
+    0.1
+}
+fn default_far() -> f32 {
+    1000.0
+}
 
 impl Camera3D {
     fn is_valid(&self) -> bool {
@@ -212,7 +244,11 @@ impl Camera3D {
             && self.far_clip.is_finite()
             && self.near_clip > 0.0
             && self.far_clip > self.near_clip
-            && self.position.iter().chain(self.target.iter()).all(|v| v.is_finite())
+            && self
+                .position
+                .iter()
+                .chain(self.target.iter())
+                .all(|v| v.is_finite())
     }
 }
 
@@ -240,12 +276,21 @@ pub struct Light3D {
 
 impl Default for Light3D {
     fn default() -> Self {
-        Self { kind: LightKind::Directional, intensity: default_intensity(), color_rgb: default_color(), position: [0.0; 3] }
+        Self {
+            kind: LightKind::Directional,
+            intensity: default_intensity(),
+            color_rgb: default_color(),
+            position: [0.0; 3],
+        }
     }
 }
 
-fn default_intensity() -> f32 { 1.0 }
-fn default_color() -> [f32; 3] { [1.0; 3] }
+fn default_intensity() -> f32 {
+    1.0
+}
+fn default_color() -> [f32; 3] {
+    [1.0; 3]
+}
 
 impl Light3D {
     /// Intensity and colour channels must be finite and non-negative. Position
@@ -254,7 +299,10 @@ impl Light3D {
     fn is_valid(&self) -> bool {
         self.intensity.is_finite()
             && self.intensity >= 0.0
-            && self.color_rgb.iter().all(|value| value.is_finite() && *value >= 0.0)
+            && self
+                .color_rgb
+                .iter()
+                .all(|value| value.is_finite() && *value >= 0.0)
             && self.position.iter().all(|value| value.is_finite())
     }
 }
@@ -289,9 +337,15 @@ impl Default for QualitySettings {
     }
 }
 
-fn default_texture_dimension() -> u32 { 2048 }
-fn default_max_lights() -> u8 { 4 }
-fn default_target_fps() -> u16 { 60 }
+fn default_texture_dimension() -> u32 {
+    2048
+}
+fn default_max_lights() -> u8 {
+    4
+}
+fn default_target_fps() -> u16 {
+    60
+}
 
 #[cfg(test)]
 mod tests {
@@ -302,8 +356,18 @@ mod tests {
             id: "neon-rooftop".into(),
             name: "Neon Rooftop".into(),
             dimension: StageDimension::Hybrid,
-            models: vec![ModelAsset { id: "city".into(), path: "models/city.glb".into(), format: ModelFormat::Glb }],
-            nodes: vec![SceneNode { id: "city-node".into(), name: "City".into(), model_asset_id: Some("city".into()), transform: Transform3D::default(), visible: true }],
+            models: vec![ModelAsset {
+                id: "city".into(),
+                path: "models/city.glb".into(),
+                format: ModelFormat::Glb,
+            }],
+            nodes: vec![SceneNode {
+                id: "city-node".into(),
+                name: "City".into(),
+                model_asset_id: Some("city".into()),
+                transform: Transform3D::default(),
+                visible: true,
+            }],
             camera: Camera3D::default(),
             lights: vec![Light3D::default()],
             quality: QualitySettings::default(),
@@ -311,13 +375,19 @@ mod tests {
     }
 
     #[test]
-    fn valid_3d_stage_passes_validation() { assert!(sample().validate().is_ok()); }
+    fn valid_3d_stage_passes_validation() {
+        assert!(sample().validate().is_ok());
+    }
 
     #[test]
     fn missing_model_reference_is_rejected() {
         let mut stage = sample();
         stage.nodes[0].model_asset_id = Some("missing".into());
-        assert!(stage.validate().unwrap_err().iter().any(|issue| issue.contains("missing model")));
+        assert!(stage
+            .validate()
+            .unwrap_err()
+            .iter()
+            .any(|issue| issue.contains("missing model")));
     }
 
     #[test]

@@ -29,12 +29,17 @@ pub struct LogBuffer {
 }
 
 impl Default for LogBuffer {
-    fn default() -> Self { Self::new(2_000) }
+    fn default() -> Self {
+        Self::new(2_000)
+    }
 }
 
 impl LogBuffer {
     pub fn new(capacity: usize) -> Self {
-        Self { entries: VecDeque::new(), capacity: capacity.max(1) }
+        Self {
+            entries: VecDeque::new(),
+            capacity: capacity.max(1),
+        }
     }
 
     /// Append a diagnostic entry, evicting the oldest entry at capacity.
@@ -50,14 +55,22 @@ impl LogBuffer {
     }
 
     pub fn entries_at_level(&self, level: LogLevel) -> impl Iterator<Item = &LogEntry> {
-        self.entries.iter().filter(move |entry| entry.level == level)
+        self.entries
+            .iter()
+            .filter(move |entry| entry.level == level)
     }
 
-    pub fn clear(&mut self) { self.entries.clear(); }
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
 
-    pub fn len(&self) -> usize { self.entries.len() }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
 
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -65,7 +78,12 @@ mod tests {
     use super::*;
 
     fn entry(timestamp_ms: u64, message: &str) -> LogEntry {
-        LogEntry { timestamp_ms, level: LogLevel::Info, category: "engine".into(), message: message.into() }
+        LogEntry {
+            timestamp_ms,
+            level: LogLevel::Info,
+            category: "engine".into(),
+            message: message.into(),
+        }
     }
 
     #[test]
