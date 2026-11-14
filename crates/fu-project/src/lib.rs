@@ -6,6 +6,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+pub mod stage3d;
+pub use stage3d::{
+    Camera3D, Light3D, LightKind, ModelAsset, ModelFormat, QualitySettings, QualityTier,
+    SceneNode, Stage3DDefinition, StageDimension, Transform3D,
+};
+
 pub const PROJECT_FORMAT: &str = "fnf-universal-project";
 pub const PROJECT_FORMAT_VERSION: u32 = 1;
 
@@ -382,11 +388,3 @@ mod tests {
         assert_eq!(decoded, project);
     }
 }
-
-
-pub mod stage3d;
-pub use stage3d::{Camera3D, Light3D, LightKind, ModelAsset, ModelFormat, QualitySettings, QualityTier, SceneNode, Stage3DDefinition, StageDimension, Transform3D};
-
-
-pub mod stage3d;
-pub use stage3d::{Camera3D, Light3D, LightKind, ModelAsset, ModelFormat, QualitySettings, QualityTier, SceneNode, Stage3DDefinition, StageDimension, Transform3D};

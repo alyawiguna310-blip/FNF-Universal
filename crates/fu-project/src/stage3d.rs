@@ -248,11 +248,14 @@ fn default_intensity() -> f32 { 1.0 }
 fn default_color() -> [f32; 3] { [1.0; 3] }
 
 impl Light3D {
+    /// Intensity and colour channels must be finite and non-negative. Position
+    /// is a world-space coordinate, so any finite value (including negative
+    /// ones) is valid.
     fn is_valid(&self) -> bool {
         self.intensity.is_finite()
             && self.intensity >= 0.0
-            && self.color_rgb.iter().chain(self.position.iter())
-                .all(|value| value.is_finite() && *value >= 0.0)
+            && self.color_rgb.iter().all(|value| value.is_finite() && *value >= 0.0)
+            && self.position.iter().all(|value| value.is_finite())
     }
 }
 
@@ -322,6 +325,32 @@ mod tests {
         let mut stage = sample();
         stage.camera.near_clip = 10.0;
         stage.camera.far_clip = 2.0;
+        assert!(stage.validate().is_err());
+    }
+
+    #[test]
+    fn light_with_negative_position_is_accepted() {
+        let mut stage = sample();
+        stage.lights[0].position = [-4.0, 2.5, -10.0];
+        assert!(stage.validate().is_ok());
+    }
+
+    #[test]
+    fn light_with_non_finite_position_is_rejected() {
+        let mut stage = sample();
+        stage.lights[0].position = [0.0, f32::NAN, 0.0];
+        assert!(stage.validate().is_err());
+        stage.lights[0].position = [f32::INFINITY, 0.0, 0.0];
+        assert!(stage.validate().is_err());
+    }
+
+    #[test]
+    fn light_with_negative_colour_or_intensity_is_still_rejected() {
+        let mut stage = sample();
+        stage.lights[0].color_rgb = [1.0, -0.1, 1.0];
+        assert!(stage.validate().is_err());
+        stage.lights[0].color_rgb = [1.0; 3];
+        stage.lights[0].intensity = -1.0;
         assert!(stage.validate().is_err());
     }
 
