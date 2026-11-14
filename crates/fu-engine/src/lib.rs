@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use thiserror::Error;
 
+pub mod devtools;
+pub use devtools::{LogBuffer, LogEntry, LogLevel};
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum IntegrationStatus {
@@ -137,7 +140,3 @@ mod tests {
         assert!(sample().supports("android"));
     }
 }
-
-
-pub mod devtools;
-pub use devtools::{LogBuffer, LogEntry, LogLevel};
