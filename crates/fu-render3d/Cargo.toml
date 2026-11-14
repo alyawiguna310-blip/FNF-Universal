@@ -6,6 +6,7 @@ license.workspace = true
 description = "Backend-agnostic 3D rendering foundation for FNF Universal"
 
 [dependencies]
+fu-graphics = { path = "../fu-graphics" }
 glam = "0.29"
 serde.workspace = true
 thiserror.workspace = true

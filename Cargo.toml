@@ -10,7 +10,9 @@ members = [
   "crates/fu-benchmark",
   "crates/fu-bridge",
   "crates/fu-project",
+  "crates/fu-graphics",
   "crates/fu-render3d",
+  "crates/fu-render3d-wgpu",
 ]
 
 [workspace.package]

@@ -1,0 +1,11 @@
+[package]
+name = "fu-graphics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Graphics quality settings, device capability limits and the shader effect catalog. No GPU code."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

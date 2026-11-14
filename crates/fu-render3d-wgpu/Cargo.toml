@@ -1,0 +1,26 @@
+[package]
+name = "fu-render3d-wgpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "wgpu backend for fu-render3d"
+
+[dependencies]
+fu-render3d = { path = "../fu-render3d" }
+wgpu = "24"
+winit = "0.30"
+bytemuck = { version = "1.25", features = ["derive"] }
+pollster = "1.0"
+glam = "0.29"
+thiserror.workspace = true
+
+[features]
+default = []
+gltf-import = ["dep:gltf"]
+
+[dependencies.gltf]
+version = "1.4"
+optional = true
+
+[dev-dependencies]
+serde_json.workspace = true
