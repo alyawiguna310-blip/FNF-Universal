@@ -21,7 +21,7 @@ behaviour) is still planned and is described in `adapters/vslice/ADAPTER.md`.
 | Asset references and inventory | Implemented |
 | Unknown properties | Preserved verbatim on every structure |
 | Scripts and native binaries | Inventoried only, never read or executed |
-| Verified against a real mod | **Not yet** — see limitations |
+| Verified against a real mod | Partially — the official `example_mods/introMod` imports cleanly; song, character and stage documents are fixture-only |
 
 ## Folder layout understood
 
@@ -117,9 +117,13 @@ A whole `mods/` directory can be imported with `import_vslice_mods_root`.
 
 ## Known limitations
 
-* The importer has been verified against synthetic fixtures built from the public
-  V-Slice formats, not against a real V-Slice mod. Compatibility is therefore
-  reported per finding and never claimed wholesale.
+* Verification is partial. The official `example_mods/introMod` from
+  `FunkinCrew/Funkin` (Apache-2.0) was imported from a local copy and reported no
+  findings: its title, `api_version` `0.8.0`, `mod_version`, author and both data
+  files were read correctly. Song, character and stage documents have only been
+  exercised with synthetic fixtures built from the published formats, because the
+  base game's song assets are not part of the public repository. Compatibility is
+  therefore reported per finding and never claimed wholesale.
 * Song `music/<id>/<id>-metadata.json` (separated music data) is inventoried as an
   asset but not interpreted; song metadata is read from the song directory.
 * Charts using the nested `{ "song": { ... } }` layout (Psych-family charts) are
@@ -142,3 +146,8 @@ unknown-field preservation, manifest-only mods, mods root discovery, script and
 binary inventory, variations, malformed documents, traversal rejection, the
 `charts/` fallback, validation findings, format-version classification and model
 JSON round-tripping.
+
+The only real-world check so far is the official example mod described under
+limitations; the song, character and stage fixtures are synthetic. When a real
+mod is available, importing it and recording the report is the next step before
+claiming broader compatibility.
