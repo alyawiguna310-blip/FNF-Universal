@@ -10,11 +10,12 @@ Rust shared services
    |-- chart metadata inspection
    |-- asset indexing
    |-- read-only mod import + validation (fu-import, see docs/MOD_IMPORT.md)
+   |-- V-Slice data import (fu-import::vslice, see docs/VSLICE_ADAPTER.md)
    |-- config + storage
    |-- benchmarks
    |
 Engine adapter contract
-   |-- V-Slice (manifest/contract first)
+   |-- V-Slice (data import implemented, runtime contract next)
    |-- Psych (future)
    |-- Kade (future)
    `-- custom engines (future)

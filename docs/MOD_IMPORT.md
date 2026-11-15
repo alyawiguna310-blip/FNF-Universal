@@ -225,3 +225,10 @@ The importer treats every file as untrusted input.
   that the editor project schema cannot represent (unknown chart properties,
   arbitrary INI sections, atlas metadata), so any future skeleton conversion
   must document what it drops.
+
+## Related
+
+* `docs/VSLICE_ADAPTER.md` — the V-Slice importer (`fu_import::vslice`), which
+  shares the diagnostics, path-safety and discovery layers described here.
+* `docs/SECURITY_AND_IMPORT.md` — the import pipeline and compatibility labels
+  every importer follows.
