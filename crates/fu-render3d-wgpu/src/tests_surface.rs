@@ -110,6 +110,7 @@ fn present_mode_no_vsync_falls_back_to_fifo_when_neither_available() {
 
 #[test]
 fn render_target_cache_reuses_on_same_dims() {
+    let _gpu = crate::test_gpu::gpu_lock();
     let mut backend = match WgpuBackend::new_headless() {
         Ok(b) => b,
         Err(e) => {
@@ -140,6 +141,7 @@ fn render_target_cache_reuses_on_same_dims() {
 
 #[test]
 fn render_target_cache_invalidates_on_resize() {
+    let _gpu = crate::test_gpu::gpu_lock();
     let mut backend = match WgpuBackend::new_headless() {
         Ok(b) => b,
         Err(e) => {
@@ -173,6 +175,7 @@ fn render_target_cache_invalidates_on_resize() {
 
 #[test]
 fn render_target_cache_invalidates_depth_on_msaa_change() {
+    let _gpu = crate::test_gpu::gpu_lock();
     let mut backend = match WgpuBackend::new_headless() {
         Ok(b) => b,
         Err(e) => {
@@ -215,6 +218,7 @@ fn render_target_cache_invalidates_depth_on_msaa_change() {
 
 #[test]
 fn zero_sized_viewport_returns_error() {
+    let _gpu = crate::test_gpu::gpu_lock();
     let mut backend = match WgpuBackend::new_headless() {
         Ok(b) => b,
         Err(e) => {

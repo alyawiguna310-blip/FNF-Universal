@@ -7,6 +7,9 @@ pub mod types;
 #[cfg(test)]
 mod tests_surface;
 
+#[cfg(test)]
+pub(crate) mod test_gpu;
+
 pub use backend::{register_builtin_shaders, WgpuBackend, LIT_WGSL, UNLIT_WGSL};
 #[cfg(feature = "gltf-import")]
 pub use loader::GltfImporter;
@@ -30,6 +33,7 @@ mod tests {
 
     #[test]
     fn test_headless_wgpu_backend_creation() {
+        let _gpu = crate::test_gpu::gpu_lock();
         let backend = WgpuBackend::new_headless();
         assert!(
             backend.is_ok(),
@@ -43,6 +47,7 @@ mod tests {
 
     #[test]
     fn test_render_plane_headless() {
+        let _gpu = crate::test_gpu::gpu_lock();
         let mut backend = match WgpuBackend::new_headless() {
             Ok(b) => b,
             Err(e) => {
@@ -83,6 +88,7 @@ mod tests {
 
     #[test]
     fn test_render_lit_scene_headless() {
+        let _gpu = crate::test_gpu::gpu_lock();
         let mut backend = match WgpuBackend::new_headless() {
             Ok(b) => b,
             Err(e) => {
