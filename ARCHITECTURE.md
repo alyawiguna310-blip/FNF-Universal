@@ -9,6 +9,7 @@ Rust shared services
    |-- engine registry + manifest validation
    |-- chart metadata inspection
    |-- asset indexing
+   |-- read-only mod import + validation (fu-import, see docs/MOD_IMPORT.md)
    |-- config + storage
    |-- benchmarks
    |
