@@ -187,6 +187,18 @@ pub enum DiagnosticKind {
     InvalidAnimation,
     /// Content is recognized but cannot be imported faithfully.
     UnsupportedFeature,
+    /// A data format version falls outside the range this importer verifies.
+    UnsupportedFormatVersion,
+    /// A difficulty declared by song metadata has no notes in the chart.
+    MissingDifficulty,
+    /// A chart carries notes for a difficulty the metadata does not declare.
+    UndeclaredDifficulty,
+    /// A song directory has no instrumental audio.
+    MissingSongAudio,
+    /// A note is malformed or uses a direction outside the strumline range.
+    InvalidNote,
+    /// A song event is malformed.
+    InvalidEvent,
 }
 
 impl DiagnosticKind {
@@ -231,6 +243,12 @@ impl DiagnosticKind {
             Self::LegacyChartFormat => "legacy-chart-format",
             Self::InvalidAnimation => "invalid-animation",
             Self::UnsupportedFeature => "unsupported-feature",
+            Self::UnsupportedFormatVersion => "unsupported-format-version",
+            Self::MissingDifficulty => "missing-difficulty",
+            Self::UndeclaredDifficulty => "undeclared-difficulty",
+            Self::MissingSongAudio => "missing-song-audio",
+            Self::InvalidNote => "invalid-note",
+            Self::InvalidEvent => "invalid-event",
         }
     }
 
@@ -266,7 +284,12 @@ impl DiagnosticKind {
             | Self::ConflictingStateRedirect
             | Self::UndefinedEvent
             | Self::LegacyChartFormat
-            | Self::InvalidAnimation => Severity::Warning,
+            | Self::InvalidAnimation
+            | Self::UnsupportedFormatVersion
+            | Self::MissingDifficulty
+            | Self::MissingSongAudio
+            | Self::InvalidNote
+            | Self::InvalidEvent => Severity::Warning,
 
             Self::UnsupportedScript
             | Self::UnsupportedArchive
@@ -276,6 +299,7 @@ impl DiagnosticKind {
             | Self::UnknownCharacterRole
             | Self::DuplicateChartDifficulty
             | Self::UnknownChartField
+            | Self::UndeclaredDifficulty
             | Self::UnsupportedFeature => Severity::Info,
         }
     }
@@ -283,9 +307,10 @@ impl DiagnosticKind {
     /// Default support classification for this kind.
     pub fn support(self) -> SupportLevel {
         match self {
-            Self::UnknownMetadata | Self::UnknownChartField | Self::DuplicateChartDifficulty => {
-                SupportLevel::Supported
-            }
+            Self::UnknownMetadata
+            | Self::UnknownChartField
+            | Self::DuplicateChartDifficulty
+            | Self::UndeclaredDifficulty => SupportLevel::Supported,
 
             Self::MissingCharacterReference
             | Self::MissingStageReference
@@ -311,6 +336,11 @@ impl DiagnosticKind {
             | Self::ConflictingStateRedirect
             | Self::LegacyChartFormat
             | Self::InvalidAnimation
+            | Self::UnsupportedFormatVersion
+            | Self::MissingDifficulty
+            | Self::MissingSongAudio
+            | Self::InvalidNote
+            | Self::InvalidEvent
             | Self::UnsupportedFeature => SupportLevel::Partial,
 
             Self::AutoloadUnreadable

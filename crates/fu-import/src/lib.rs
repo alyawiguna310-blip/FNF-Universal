@@ -7,6 +7,16 @@
 //! behaviour that cannot be verified from the files alone is reported as
 //! unverified rather than assumed.
 //!
+//! # Supported formats
+//!
+//! * [`codename`] — Codename Engine mods (`data/config/modpack.ini`, XML
+//!   characters and stages, Codename chart JSON).
+//! * [`vslice`] — V-Slice (Friday Night Funkin') mods (`_polymod_meta.json`,
+//!   song `metadata.json`/`chart.json` pairs, character and stage JSON).
+//!
+//! The two importers share [`report`], [`path`] and [`discovery`], and each one
+//! keeps its parsing isolated so a change in one format cannot affect the other.
+//!
 //! # Safety model
 //!
 //! * Every path taken from imported content is parsed into a
@@ -41,9 +51,11 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 pub mod codename;
+pub mod discovery;
 pub mod ini;
 pub mod path;
 pub mod report;
+pub mod vslice;
 pub mod xml;
 
 #[doc(hidden)]
@@ -54,6 +66,11 @@ pub use codename::{
     CodenameMod, DiscoveredMod, ModsDiscovery, ParseOptions, ParsedMod,
 };
 pub use report::{Diagnostic, DiagnosticKind, ImportReport, ImportSummary, Severity, SupportLevel};
+pub use vslice::{
+    import_vslice_mod, import_vslice_mod_with, import_vslice_mods_root, is_vslice_directory,
+    parse_vslice_mod, parse_vslice_mod_with, validate as validate_vslice, MetadataKind, VsliceMod,
+    VsliceOutcome, VsliceParseOptions, VSLICE_MANIFEST_FILE, VSLICE_METADATA_FILE,
+};
 
 /// Failure that prevents a directory from being imported at all.
 ///
