@@ -1,3 +1,15 @@
+//! Chart inspection and the runtime chart model.
+//!
+//! [`runtime`] is the model the engine plays: notes, strum lines and events
+//! measured against one [`fu_timing::BpmMap`]. The JSON helpers below are the
+//! original metadata probe and stay independent of it.
+
+pub mod runtime;
+
+pub use runtime::{
+    vslice_timing, RuntimeChart, RuntimeEvent, RuntimeNote, RuntimeStrumLine, StrumPosition,
+};
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

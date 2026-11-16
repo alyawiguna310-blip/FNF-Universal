@@ -1,0 +1,7 @@
+{
+  "displayName": "Timing Fixture",
+  "bpm": 100.0,
+  "beatsPerMeasure": 4,
+  "stepsPerBeat": 4,
+  "difficulties": ["hard"]
+}

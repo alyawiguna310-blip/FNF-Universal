@@ -372,6 +372,80 @@ impl WgpuBackend {
         }
     }
 
+    /// Reads the offscreen colour target back into CPU memory as RGBA8 rows.
+    ///
+    /// Intended for headless verification: it only works after rendering into a
+    /// backend-owned offscreen target, not when a window surface is the target.
+    pub fn read_target_pixels(&self) -> Result<(u32, u32, Vec<u8>)> {
+        let Some((width, height, texture, _view)) = &self.current_color_texture else {
+            return Err(RenderError::Backend(
+                "no offscreen colour target to read back".into(),
+            ));
+        };
+        let (width, height) = (*width, *height);
+        let unpadded_row = width as usize * 4;
+        let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
+        let padded_row = unpadded_row.div_ceil(alignment) * alignment;
+
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Offscreen Readback Buffer"),
+            size: (padded_row * height as usize) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Offscreen Readback Encoder"),
+            });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_row as u32),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit(Some(encoder.finish()));
+
+        let slice = buffer.slice(..);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+        let _ = self.device.poll(wgpu::Maintain::Wait);
+        receiver
+            .recv()
+            .map_err(|error| RenderError::Backend(format!("readback mapping lost: {error}")))?
+            .map_err(|error| {
+                RenderError::Backend(format!("readback buffer mapping failed: {error:?}"))
+            })?;
+
+        let mapped = slice.get_mapped_range();
+        let mut pixels = Vec::with_capacity(unpadded_row * height as usize);
+        for row in 0..height as usize {
+            let start = row * padded_row;
+            pixels.extend_from_slice(&mapped[start..start + unpadded_row]);
+        }
+        drop(mapped);
+        buffer.unmap();
+        Ok((width, height, pixels))
+    }
+
     /// Prunes and clears cached GPU materials, pipelines, meshes, and textures.
     pub fn clear_caches(&mut self) {
         self.mesh_cache.clear();

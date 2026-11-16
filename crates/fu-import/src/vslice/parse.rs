@@ -333,35 +333,85 @@ impl Parser {
     }
 
     fn parse_songs(&mut self) {
-        let Some(songs_root) = self.top_level_directory(SONGS_DIRECTORY) else {
-            return;
-        };
-        let prefix = format!("{songs_root}/");
-        let mut directories: Vec<String> = self
-            .tree
-            .directories
-            .iter()
-            .filter(|directory| {
-                directory
-                    .strip_prefix(&prefix)
-                    .is_some_and(|rest| !rest.is_empty() && !rest.contains('/'))
-            })
-            .cloned()
-            .collect();
-        directories.sort();
-        directories.dedup();
+        // V-Slice keeps song data under `data/songs/<id>/` and the audio under
+        // `songs/<id>/`, so a song is assembled from both directories and other
+        // mods keep everything next to the audio.
+        let mut locations: BTreeMap<String, SongLocation> = BTreeMap::new();
+        for (root, is_data) in self.song_roots() {
+            let prefix = format!("{root}/");
+            let mut directories: Vec<String> = self
+                .tree
+                .directories
+                .iter()
+                .filter(|directory| {
+                    directory
+                        .strip_prefix(&prefix)
+                        .is_some_and(|rest| !rest.is_empty() && !rest.contains('/'))
+                })
+                .cloned()
+                .collect();
+            directories.sort();
+            directories.dedup();
 
-        for directory in directories {
-            let id = directory.rsplit('/').next().unwrap_or_default().to_string();
-            let files = self.files_in(&directory);
-            let song = self.parse_song(id, directory, files);
+            for directory in directories {
+                let id = directory.rsplit('/').next().unwrap_or_default().to_string();
+                let location =
+                    locations
+                        .entry(id.to_ascii_lowercase())
+                        .or_insert_with(|| SongLocation {
+                            id,
+                            data_dir: None,
+                            audio_dir: None,
+                        });
+                if is_data {
+                    location.data_dir.get_or_insert(directory);
+                } else {
+                    location.audio_dir.get_or_insert(directory);
+                }
+            }
+        }
+
+        for location in locations.into_values() {
+            let song = self.parse_song(location);
             self.module.songs.push(song);
         }
     }
 
-    fn parse_song(&mut self, id: String, directory: String, files: Vec<String>) -> Song {
+    /// Directories that may hold song folders, with `true` for `data/songs`.
+    fn song_roots(&self) -> Vec<(String, bool)> {
+        let mut roots = Vec::new();
+        let data_songs = self
+            .tree
+            .directories
+            .iter()
+            .find(|directory| {
+                let mut parts = directory.split('/');
+                matches!(parts.next(), Some(first) if first.eq_ignore_ascii_case("data"))
+                    && matches!(parts.next(), Some(second) if second.eq_ignore_ascii_case("songs"))
+                    && parts.next().is_none()
+            })
+            .cloned();
+        if let Some(root) = data_songs {
+            roots.push((root, true));
+        }
+        if let Some(root) = self.top_level_directory(SONGS_DIRECTORY) {
+            roots.push((root, false));
+        }
+        roots
+    }
+
+    fn parse_song(&mut self, location: SongLocation) -> Song {
+        let SongLocation {
+            id,
+            data_dir,
+            audio_dir,
+        } = location;
+        let directory = data_dir
+            .clone()
+            .or_else(|| audio_dir.clone())
+            .unwrap_or_default();
         let mut song = Song {
-            id: id.clone(),
+            id,
             directory: directory.clone(),
             ..Song::default()
         };
@@ -370,19 +420,35 @@ impl Parser {
         let mut chart_files: Vec<(Option<String>, String)> = Vec::new();
         let mut nested_chart_directory: Option<String> = None;
 
-        for file in &files {
-            let Some(name) = file.rsplit('/').next() else {
-                continue;
-            };
-            let Some(role) = classify_song_file(name) else {
-                continue;
-            };
-            match role.0 {
-                "metadata" => metadata_files.push((role.1, file.clone())),
-                "chart" => chart_files.push((role.1, file.clone())),
-                _ => {}
+        let mut content_directories: Vec<String> = Vec::new();
+        if let Some(data) = &data_dir {
+            content_directories.push(data.clone());
+        }
+        if let Some(audio) = &audio_dir {
+            if data_dir.as_deref() != Some(audio.as_str()) {
+                content_directories.push(audio.clone());
             }
         }
+
+        for content_directory in &content_directories {
+            for file in self.files_in(content_directory) {
+                let Some(name) = file.rsplit('/').next() else {
+                    continue;
+                };
+                let Some(role) = classify_song_file(name) else {
+                    continue;
+                };
+                match role.0 {
+                    "metadata" => metadata_files.push((role.1, file)),
+                    "chart" => chart_files.push((role.1, file)),
+                    _ => {}
+                }
+            }
+        }
+        metadata_files.sort();
+        metadata_files.dedup();
+        chart_files.sort();
+        chart_files.dedup();
 
         // A `charts/` folder is used by some mods; it is only consulted when the
         // song directory has no chart file of its own.
@@ -462,8 +528,9 @@ impl Parser {
             );
         }
 
-        for file in &files {
-            let Some(entry) = self.module.assets.get(file).cloned() else {
+        let asset_directory = audio_dir.unwrap_or_else(|| directory.clone());
+        for file in self.files_in(&asset_directory) {
+            let Some(entry) = self.module.assets.get(&file).cloned() else {
                 continue;
             };
             if entry.kind == AssetKind::Audio {
@@ -1004,6 +1071,13 @@ impl Parser {
     }
 }
 
+/// Where a song's documents and audio were found.
+struct SongLocation {
+    id: String,
+    data_dir: Option<String>,
+    audio_dir: Option<String>,
+}
+
 fn file_stem(path: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or(path);
     name.rsplit_once('.')
@@ -1511,6 +1585,41 @@ mod tests {
         let week = module.week("week1").expect("week");
         assert_eq!(week.story_name.as_deref(), Some("Daddy Dearest"));
         assert_eq!(week.songs, vec!["dadbattle", "bopeebo"]);
+    }
+
+    #[test]
+    fn song_documents_and_audio_come_from_different_directories() {
+        let temp = TempDir::new("vslice-split-layout").unwrap();
+        temp.write("mod/_polymod_meta.json", r##"{"title": "Split Layout"}"##)
+            .unwrap();
+        temp.write(
+            "mod/data/songs/pico/pico-metadata.json",
+            r##"{"version": "2.2.4", "songName": "Pico", "timeChanges": [{"t": 0, "bpm": 150}], "playData": {"difficulties": ["hard"]}}"##,
+        )
+        .unwrap();
+        temp.write(
+            "mod/data/songs/pico/pico-chart.json",
+            r##"{"version": "2.0.0", "notes": {"hard": [{"t": 500, "d": 1}]}}"##,
+        )
+        .unwrap();
+        temp.write("mod/songs/pico/Inst.ogg", "audio").unwrap();
+        temp.write("mod/songs/pico/Voices-bf.ogg", "audio").unwrap();
+
+        let discovered = crate::discovery::open_mod_dir(&temp.join("mod")).unwrap();
+        let parsed = parse_vslice_mod(&discovered);
+        let song = parsed.module.song("pico").expect("song");
+
+        assert_eq!(song.directory, "data/songs/pico");
+        assert_eq!(
+            song.metadata.as_ref().unwrap().song_name.as_deref(),
+            Some("Pico")
+        );
+        assert_eq!(song.charts.len(), 1);
+        assert_eq!(song.charts[0].notes["hard"].len(), 1);
+        assert_eq!(song.audio.len(), 2, "audio is read from songs/pico");
+        assert!(!parsed.report.contains_code("missing-metadata"));
+        assert!(!parsed.report.contains_code("missing-song-file"));
+        assert!(!parsed.report.has_errors(), "{:?}", parsed.report);
     }
 
     #[test]

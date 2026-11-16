@@ -153,11 +153,11 @@ fn validate_song_metadata_versions(song: &Song, report: &mut ImportReport) {
                 metadata.source.clone(),
                 "metadata declares no BPM change",
             );
-        } else if metadata.time_changes[0].t.unwrap_or(-1.0) != 0.0 {
+        } else if metadata.time_changes[0].t.unwrap_or(0.0) > 0.0 {
             report.add_at(
                 DiagnosticKind::MalformedMetadata,
                 metadata.source.clone(),
-                "the first BPM change must be at timestamp 0",
+                "the first BPM change must not start after timestamp 0",
             );
         }
 

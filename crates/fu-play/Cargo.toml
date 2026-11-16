@@ -1,0 +1,21 @@
+[package]
+name = "fu-play"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Minimal playable Friday Night Funkin' style Windows prototype"
+
+[dependencies]
+fu-assets = { path = "../fu-assets" }
+fu-chart = { path = "../fu-chart" }
+fu-import = { path = "../fu-import" }
+fu-timing = { path = "../fu-timing" }
+fu-render3d = { path = "../fu-render3d" }
+fu-render3d-wgpu = { path = "../fu-render3d-wgpu" }
+fu-vfs = { path = "../fu-vfs" }
+glam = "0.29"
+# `vorbis` is required to decode the Ogg Vorbis instrumentals V-Slice songs ship.
+rodio = { version = "0.23", default-features = false, features = ["playback", "wav", "vorbis"] }
+serde.workspace = true
+serde_json.workspace = true
+winit = "0.30.13"

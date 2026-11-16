@@ -21,17 +21,18 @@ behaviour) is still planned and is described in `adapters/vslice/ADAPTER.md`.
 | Asset references and inventory | Implemented |
 | Unknown properties | Preserved verbatim on every structure |
 | Scripts and native binaries | Inventoried only, never read or executed |
-| Verified against a real mod | Partially — the official `example_mods/introMod` imports cleanly; song, character and stage documents are fixture-only |
+| Verified against a real mod | Partially — the official `example_mods/introMod` imports cleanly, and the real song `bopeebo-short-mix` from `ComedyLost/The-Siivagunner-Collection` imports with its chart and instrumental; character and stage documents are fixture-only |
 
 ## Folder layout understood
 
 ```text
 <mod>/
   _polymod_meta.json          # or manifest.json
-  songs/<id>/
+  data/songs/<id>/           # where the engine keeps a song's documents
     <id>-metadata.json        # also metadata.json, and <id>-metadata-<variation>.json
     <id>-chart.json           # also chart.json, and <id>-chart-<variation>.json
     charts/<name>.json        # fallback when the song directory has no chart file
+  songs/<id>/
     Inst.ogg                  # instrumental; Inst-<variation>.ogg for variations
   characters/*.json           # alternatively data/characters/*.json
   stages/*.json               # alternatively data/stages/*.json
@@ -39,6 +40,10 @@ behaviour) is still planned and is described in `adapters/vslice/ADAPTER.md`.
   images/...
   scripts/...
 ```
+
+A song is assembled from both directories by song id, because real mods split the
+documents under `data/songs/<id>/` from the audio under `songs/<id>/`; mods that
+keep everything in `songs/<id>/` import the same way.
 
 Discovery is flat: every directory inside `mods/` that contains a recognized
 metadata file is a mod. A `_polymod_meta.json` is preferred over a `manifest.json`

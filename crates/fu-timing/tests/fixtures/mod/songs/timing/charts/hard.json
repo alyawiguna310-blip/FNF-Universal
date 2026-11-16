@@ -1,0 +1,20 @@
+{
+  "codenameChart": true,
+  "chartVersion": "1.6.0",
+  "scrollSpeed": 1.6,
+  "strumLines": [
+    {
+      "keyCount": 4,
+      "position": "boyfriend",
+      "characters": ["bf"],
+      "notes": [
+        { "time": 1000, "id": 0, "sLen": 0 },
+        { "time": 2000, "id": 3, "sLen": 500 }
+      ]
+    }
+  ],
+  "events": [
+    { "time": 3000, "name": "BPM Change", "params": [200.0] },
+    { "time": 6000, "name": "Time Signature Change", "params": [3.0, 4.0, false] }
+  ]
+}

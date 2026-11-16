@@ -4,6 +4,7 @@ members = [
   "crates/fu-core",
   "crates/fu-engine",
   "crates/fu-chart",
+  "crates/fu-timing",
   "crates/fu-assets",
   "crates/fu-config",
   "crates/fu-storage",
@@ -13,6 +14,8 @@ members = [
   "crates/fu-graphics",
   "crates/fu-render3d",
   "crates/fu-render3d-wgpu",
+  "crates/fu-vfs",
+  "crates/fu-play",
   "crates/fu-import",
 ]
 

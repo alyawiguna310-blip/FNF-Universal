@@ -1,0 +1,11 @@
+[package]
+name = "fu-timing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Codename Engine timing: BPM change map, Conductor and hit windows"
+
+[dependencies]
+fu-import = { path = "../fu-import" }
+serde.workspace = true
+serde_json.workspace = true
