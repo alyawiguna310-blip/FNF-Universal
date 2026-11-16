@@ -21,6 +21,11 @@ use fu_vfs::Vfs;
 // Re-exported types from the parent crate.
 
 /// A rectangle inside a sprite sheet, in pixels.
+///
+/// Reserved for reading the real `spritemap1.json` sprite rectangles.
+/// [`AnimateAtlas::parse`] currently reads only the symbol/timeline JSON and
+/// uses a full-sheet placeholder UV, so nothing constructs this yet.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnimateRect {
     pub x: u32,
@@ -29,6 +34,7 @@ pub struct AnimateRect {
     pub height: u32,
 }
 
+#[allow(dead_code)] // Reserved for spritemap1.json parsing; see `AnimateRect`.
 impl AnimateRect {
     /// Converts this rectangle to normalized UV coordinates within `sheet`.
     pub fn uv(self, sheet_width: u32, sheet_height: u32) -> Option<UvRect> {
@@ -59,6 +65,9 @@ pub struct UvRect {
 }
 
 /// One named frame of an Animate spritemap.
+///
+/// Reserved for reading the real `spritemap1.json`; see [`AnimateRect`].
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct AnimateFrame {
     pub name: String,
@@ -66,6 +75,7 @@ pub struct AnimateFrame {
     pub uv: UvRect,
 }
 
+#[allow(dead_code)] // Reserved for spritemap1.json parsing; see `AnimateRect`.
 impl AnimateFrame {
     pub fn from_rect(name: &str, rect: AnimateRect, sheet_width: u32, sheet_height: u32) -> Self {
         AnimateFrame {
@@ -129,6 +139,34 @@ pub struct AnimateAtlas {
     pub symbols: BTreeMap<String, Vec<(String, AnimateQuad)>>,
 }
 
+/// The affine transform of one keyframe element, or `None` when the element is
+/// neither a symbol instance nor an atom instance.
+///
+/// Both kinds carry a 16-value column-major `M3D` matrix. The 2D part is taken
+/// the way `FlxElement.fromJSON` does:
+/// `[m3d[0], m3d[1], m3d[4], m3d[5], m3d[12] + POS.x, m3d[13] + POS.y]`.
+fn element_affine(element: &AnimateElement) -> Option<Affine> {
+    match (&element.symbol_instance, &element.atom_instance) {
+        (Some(instance), _) => Some(affine_from_m3d(
+            &instance.matrix_3d,
+            &instance.bitmap_data.offset,
+        )),
+        (None, Some(atom)) => Some(affine_from_m3d(&atom.matrix_3d, &atom.offset)),
+        (None, None) => None,
+    }
+}
+
+fn affine_from_m3d(m3d: &[f32; 16], offset: &AnimatePoint) -> Affine {
+    Affine {
+        a: m3d[0],
+        b: m3d[1],
+        c: m3d[4],
+        d: m3d[5],
+        tx: m3d[12] + offset.x,
+        ty: m3d[13] + offset.y,
+    }
+}
+
 impl AnimateAtlas {
     /// Parse an Animate spritemap JSON file from the VFS.
     ///
@@ -138,21 +176,21 @@ impl AnimateAtlas {
     pub fn parse(vfs: &Vfs, json_path: VfsPath) -> Result<Self, AtlasError> {
         // Read the JSON file bytes from VFS.
         let bytes = vfs.read(&json_path).map_err(|e| AtlasError::new(
-            &format!("failed to read VFS path '{}': {}", json_path.to_string(), e),
+            &format!("failed to read VFS path '{json_path}': {e}"),
             json_path.to_string(),
             None,
         ))?;
 
         // Deserialize the JSON text.
         let text = String::from_utf8(bytes).map_err(|e| AtlasError::new(
-            &format!("invalid UTF-8 in Animate JSON '{}': {}", json_path.to_string(), e),
+            &format!("invalid UTF-8 in Animate JSON '{json_path}': {e}"),
             json_path.to_string(),
             Some(e.to_string()),
         ))?;
 
         // Deserialize the Animate JSON structure using typed structs.
         let atlas: AnimateJson = serde_json::from_str(&text).map_err(|e| AtlasError::new(
-            &format!("failed to parse Animate JSON '{}': {}", json_path.to_string(), e),
+            &format!("failed to parse Animate JSON '{json_path}': {e}"),
             json_path.to_string(),
             Some(e.to_string()),
         ))?;
@@ -160,71 +198,40 @@ impl AnimateAtlas {
         // Parse symbols and frames from the JSON structure.
         let mut symbols_map: BTreeMap<String, Vec<(String, AnimateQuad)>> = BTreeMap::new();
 
-        for symbol in &atlas.SD.symbols {
+        for symbol in &atlas.symbol_data.symbols {
             let sym_name = &symbol.symbol_name;
             let mut frames: Vec<(String, AnimateQuad)> = Vec::new();
 
-            let num_layers = symbol.timeline.layers.len();
-            let max_frames = if num_layers > 0 {
-                symbol.timeline.layers.iter().map(|l| l.frames.len()).max().unwrap_or(0)
-            } else {
-                0
-            };
+            let max_frames = symbol
+                .timeline
+                .layers
+                .iter()
+                .map(|layer| layer.frames.len())
+                .max()
+                .unwrap_or(0);
 
             for frame_idx in 0..max_frames {
                 let mut combined_affine = Affine::identity();
                 let mut has_any = false;
 
-                for layer_idx in 0..num_layers {
-                    if frame_idx >= symbol.timeline.layers[frame_idx].frames.len() {
+                // Every layer contributes its keyframe at this position; a
+                // layer with fewer keyframes simply has nothing to add.
+                for layer in &symbol.timeline.layers {
+                    let Some(keyframe) = layer.frames.get(frame_idx) else {
                         continue;
-                    }
-                    let frame_eles = &symbol.timeline.layers[frame_idx].frames[frame_idx].elements;
-                    for elem in frame_eles {
-                        let affine = match (&elem.symbol_instance, &elem.atom_instance) {
-                            (Some(si), _) => {
-                                let m3d = &si.matrix_3d;
-                                // M3D is 16 elements in column-major order.
-                                // We extract the affine part (3x2) + translation.
-                                // Convention from FlxElement.fromJSON:
-                                // m = [m3d[0], m3d[1], m3d[4], m3d[5], m3d[12]+POS.x, m3d[13]+POS.y]
-                                let a_val = m3d[0];
-                                let b_val = m3d[1];
-                                let c_val = m3d[4];
-                                let d_val = m3d[5];
-                                let tx_val = m3d[12] + si.bitmap_data.offset.x;
-                                let ty_val = m3d[13] + si.bitmap_data.offset.y;
-                                combined_affine = combined_affine.concat(Affine { a: a_val, b: b_val, c: c_val, d: d_val, tx: tx_val, ty: ty_val });
-                                has_any = true;
-                                continue;
-                            }
-                            (None, Some(asi)) => {
-                                let m3d = &asi.matrix_3d;
-                                let a_val = m3d[0];
-                                let b_val = m3d[1];
-                                let c_val = m3d[4];
-                                let d_val = m3d[5];
-                                let tx_val = m3d[12] + asi.offset.x;
-                                let ty_val = m3d[13] + asi.offset.y;
-                                combined_affine = combined_affine.concat(Affine { a: a_val, b: b_val, c: c_val, d: d_val, tx: tx_val, ty: ty_val });
-                                has_any = true;
-                                continue;
-                            }
-                            _ => {
-                                continue;
-                            }
-                        };
-                    }
-
-                    if has_any {
-                        let frame_name = format!("{}_{}", sym_name, frame_idx);
-                        let uv = UvRect { u0: 0.0, v0: 0.0, u1: 1.0, v1: 1.0 };
-                        frames.push((frame_name.clone(), AnimateQuad { uv, affine: combined_affine }));
+                    };
+                    for element in &keyframe.elements {
+                        if let Some(affine) = element_affine(element) {
+                            combined_affine = combined_affine.concat(affine);
+                            has_any = true;
+                        }
                     }
                 }
 
                 if has_any {
-                    // Don't add duplicate frames; just continue
+                    let frame_name = format!("{sym_name}_{frame_idx}");
+                    let uv = UvRect { u0: 0.0, v0: 0.0, u1: 1.0, v1: 1.0 };
+                    frames.push((frame_name, AnimateQuad { uv, affine: combined_affine }));
                 }
             }
 
@@ -316,12 +323,23 @@ impl From<serde_json::Error> for AtlasError {
     }
 }
 
+// The structures below mirror Adobe Animate's JSON output. Fields that the
+// parser does not read yet are still deserialized, so a document that lacks
+// them is rejected exactly as before, and they are kept for timeline playback
+// (keyframe index and duration, layer names, instance metadata). Each unread
+// field carries its own `allow(dead_code)` instead of a blanket suppression.
+
 /// Top-level Animate JSON structure, matching the output from Adobe Animate CC.
 /// We only pull the fields we need for symbol+frame extraction.
 #[derive(Debug, Deserialize)]
 struct AnimateJson {
-    AN: AnimateTimeline,
-    SD: AnimateSymbolData,
+    /// Root animation timeline (`AN`); required by the format, not read yet.
+    #[allow(dead_code)]
+    #[serde(rename = "AN")]
+    animation: AnimateTimeline,
+    /// Symbol dictionary (`SD`).
+    #[serde(rename = "SD")]
+    symbol_data: AnimateSymbolData,
 }
 
 /// Timeline with a single layer (Codename Bopeebo uses AN.TL.L[0]).
@@ -334,6 +352,7 @@ struct AnimateTimeline {
 /// One timeline layer (Codename typically has one layer per symbol).
 #[derive(Debug, Deserialize)]
 struct AnimateLayer {
+    #[allow(dead_code)]
     #[serde(rename = "LN")]
     layer_name: String,
     #[serde(rename = "FR")]
@@ -342,10 +361,15 @@ struct AnimateLayer {
 
 /// One keyframe inside a layer. Each keyframe has an index `I`, duration `DU`,
 /// and a list of elements `E` (each element is either SI or ASI/ATOM).
+///
+/// Frames are currently addressed by their position in the layer's keyframe
+/// list; `I` and `DU` (the timeline span a keyframe covers) are not used yet.
 #[derive(Debug, Deserialize)]
 struct AnimateKeyframe {
+    #[allow(dead_code)]
     #[serde(rename = "I")]
     frame_index: usize,
+    #[allow(dead_code)]
     #[serde(rename = "DU")]
     duration: usize,
     #[serde(rename = "E")]
@@ -366,16 +390,22 @@ struct AnimateElement {
 /// Symbol instance inside a keyframe element.
 #[derive(Debug, Deserialize)]
 struct AnimateSymbolInstance {
+    #[allow(dead_code)]
     #[serde(rename = "SN")]
     symbol_name: String,
+    #[allow(dead_code)]
     #[serde(rename = "IN")]
     instance_name: String,
+    #[allow(dead_code)]
     #[serde(rename = "ST")]
     symbol_type: String,
+    #[allow(dead_code)]
     #[serde(rename = "FF")]
     first_frame: usize,
+    #[allow(dead_code)]
     #[serde(rename = "LP")]
     loop_play: String,
+    #[allow(dead_code)]
     #[serde(rename = "TRP")]
     transformation_point: AnimatePoint,
     #[serde(rename = "M3D")]
@@ -387,6 +417,7 @@ struct AnimateSymbolInstance {
 /// Atom symbol instance (used for bitmap frames at the root timeline level).
 #[derive(Debug, Deserialize)]
 struct AnimateAtomInstance {
+    #[allow(dead_code)]
     #[serde(rename = "N")]
     frame_name: String,
     #[serde(rename = "M3D")]
