@@ -179,12 +179,14 @@ pub fn load_song(
     };
 
     // If a specific difficulty was requested but does not exist, report it immediately
-    if difficulty.is_some() && !available_difficulties.contains(&resolved_difficulty) {
-        return Err(SongError::NoSuchDifficulty {
-            song: song.id.clone(),
-            requested: difficulty.unwrap().to_string(),
-            available: available_difficulties.clone(),
-        });
+    if let Some(requested) = difficulty {
+        if !available_difficulties.contains(&resolved_difficulty) {
+            return Err(SongError::NoSuchDifficulty {
+                song: song.id.clone(),
+                requested: requested.to_string(),
+                available: available_difficulties.clone(),
+            });
+        }
     }
 
     // Resolve the runtime chart: it interprets the note times against the
@@ -204,7 +206,7 @@ pub fn load_song(
     }
 
     // Read audio
-    let audio = read_audio(mod_root, &song)?;
+    let audio = read_audio(mod_root, song)?;
 
     let audio_duration_ms = audio
         .as_ref()
