@@ -30,16 +30,41 @@ fn number(map: &BTreeMap<String, String>, key: &str, default: f32) -> f32 {
         .unwrap_or(default)
 }
 
+/// True when `relative` stays inside the root it is joined to: not empty, not
+/// absolute, no drive prefix or backslash, and no `..` component.
+///
+/// Stage folders, sprite names and character ids come from mod XML and song
+/// metadata, which are untrusted, so every lookup goes through this check
+/// before it touches the file system.
+fn safe_relative(relative: &str) -> bool {
+    !relative.is_empty()
+        && !relative.starts_with('/')
+        && !relative.contains('\\')
+        && !relative.contains(':')
+        && !relative.contains('\0')
+        && relative.split('/').all(|part| part != "..")
+}
+
+/// `relative` inside one root, when it is a safe path to an existing file.
+fn in_root(root: &Path, relative: &str) -> Option<PathBuf> {
+    if !safe_relative(relative) {
+        return None;
+    }
+    let candidate = root.join(relative);
+    candidate.is_file().then_some(candidate)
+}
+
 /// Find a file in mod_root first, then assets.
 fn find_file(mod_root: Option<&Path>, assets: &Path, relative: &str) -> Option<PathBuf> {
-    if let Some(root) = mod_root {
-        let candidate = root.join(relative);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
+    if let Some(found) = mod_root.and_then(|root| in_root(root, relative)) {
+        return Some(found);
     }
-    let candidate = assets.join(relative);
-    candidate.is_file().then_some(candidate)
+    in_root(assets, relative)
+}
+
+fn read_texture(path: &Path) -> Option<TextureAsset> {
+    let bytes = std::fs::read(path).ok()?;
+    TextureAsset::decode_png(&bytes).ok()
 }
 
 fn read_json(path: &Path) -> Option<serde_json::Value> {
@@ -556,7 +581,7 @@ impl CodenameContent {
                 .characters
                 .get(&role)
                 .and_then(|rig| rig.icon.as_deref());
-            if let Some(texture) = icon.and_then(|icon| self.image(&format!("images/icons/{icon}/icon.png"))) {
+            if let Some(texture) = icon.and_then(|icon| self.icon_image(icon)) {
                 resources.install_texture(key, texture);
             }
         }
@@ -580,8 +605,34 @@ impl CodenameContent {
     /// Reads an image from the mod first, then the base assets.
     fn image(&self, relative: &str) -> Option<TextureAsset> {
         let path = find_file(self.mod_root.as_deref(), &self.assets, relative)?;
-        let bytes = std::fs::read(&path).ok()?;
-        TextureAsset::decode_png(&bytes).ok()
+        read_texture(&path)
+    }
+
+    /// Reads a health-icon sheet.
+    ///
+    /// Codename's base installation keeps each icon in its own folder
+    /// (`images/icons/bf/icon.png`), while mods such as Vs Var Overhaul ship
+    /// flat files (`images/icons/neu.png`). Both layouts are accepted, and the
+    /// mod's files win over the base installation's whichever layout they use.
+    fn icon_image(&self, icon: &str) -> Option<TextureAsset> {
+        let candidates = [
+            format!("images/icons/{icon}/icon.png"),
+            format!("images/icons/{icon}.png"),
+        ];
+        let roots = self
+            .mod_root
+            .as_deref()
+            .into_iter()
+            .chain(std::iter::once(self.assets.as_path()));
+        for root in roots {
+            for relative in &candidates {
+                if let Some(texture) = in_root(root, relative).and_then(|path| read_texture(&path))
+                {
+                    return Some(texture);
+                }
+            }
+        }
+        None
     }
 }
 
@@ -710,4 +761,161 @@ pub fn song_meta_path(assets: &Path, mod_root: Option<&Path>, song_id: &str) -> 
     let relative = format!("songs/{song_id}/meta.json");
     find_file(mod_root, assets, &relative)
         .or_else(|| find_file(None, assets, &format!("data/{relative}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fu_import::test_support::TempDir;
+
+    fn png(width: u32, height: u32, rgba: [u8; 4]) -> Vec<u8> {
+        TextureAsset::solid(width, height, rgba)
+            .encode_png()
+            .expect("png")
+    }
+
+    const DAD_XML: &str = r#"<!DOCTYPE codename-engine-character>
+<character x="10" y="20" sprite="dadSheet" icon="neu">
+	<anim name="idle" anim="idle" fps="12" loop="true"/>
+	<anim name="singLEFT" anim="left" x="5" y="-3" fps="24"/>
+</character>"#;
+
+    const SHEET_XML: &str = r#"<TextureAtlas imagePath="dadSheet.png">
+	<SubTexture name="idle0000" x="0" y="0" width="8" height="8"/>
+	<SubTexture name="idle0001" x="8" y="0" width="8" height="8"/>
+	<SubTexture name="left0000" x="0" y="8" width="8" height="8" frameX="-1" frameY="-2" frameWidth="10" frameHeight="12"/>
+</TextureAtlas>"#;
+
+    #[test]
+    fn relative_paths_cannot_leave_their_root() {
+        assert!(safe_relative("images/a.png"));
+        assert!(safe_relative("images/..hidden/a.png"));
+        assert!(!safe_relative(""));
+        assert!(!safe_relative("../a.png"));
+        assert!(!safe_relative("images/../../a.png"));
+        assert!(!safe_relative("/etc/passwd"));
+        assert!(!safe_relative("C:/Windows/win.ini"));
+        assert!(!safe_relative("images\\a.png"));
+    }
+
+    #[test]
+    fn lookups_prefer_the_mod_and_refuse_traversal() {
+        let temp = TempDir::new("codename-find-file").unwrap();
+        temp.write("assets/images/a.txt", "base").unwrap();
+        temp.write("mod/images/a.txt", "mod").unwrap();
+        temp.write("secret.txt", "secret").unwrap();
+        let assets = temp.join("assets");
+        let mod_root = temp.join("mod");
+
+        let found = find_file(Some(mod_root.as_path()), assets.as_path(), "images/a.txt")
+            .expect("file exists in both layers");
+        assert!(found.starts_with(&mod_root), "the mod layer wins: {found:?}");
+
+        let base_only = find_file(None, assets.as_path(), "images/a.txt").expect("base file");
+        assert!(base_only.starts_with(&assets));
+
+        assert!(find_file(Some(mod_root.as_path()), assets.as_path(), "../secret.txt").is_none());
+        assert!(find_file(None, assets.as_path(), "images/../../secret.txt").is_none());
+    }
+
+    #[test]
+    fn a_mod_character_keeps_its_animation_and_frame_metadata() {
+        let temp = TempDir::new("codename-character").unwrap();
+        temp.write("mod/data/characters/dad.xml", DAD_XML).unwrap();
+        temp.write_bytes("mod/images/characters/dadSheet.png", &png(16, 16, [9, 9, 9, 255]))
+            .unwrap();
+        temp.write("mod/images/characters/dadSheet.xml", SHEET_XML)
+            .unwrap();
+        let assets = temp.join("assets");
+        let mod_root = temp.join("mod");
+
+        let content = CodenameContent::load(assets.as_path(), Some(mod_root.as_path()), None);
+
+        let dad = content
+            .characters
+            .get(&Role::Opponent)
+            .expect("the opponent loads from the mod");
+        assert_eq!(dad.animations.len(), 2);
+        assert_eq!(dad.position, (110.0, 120.0), "stage default plus the XML offset");
+        assert_eq!(dad.icon.as_deref(), Some("neu"));
+
+        let idle = dad.animation("idle").expect("idle");
+        assert_eq!(idle.frames.len(), 2);
+        assert!(idle.looping);
+        assert_eq!(idle.fps, 12.0);
+
+        let sing = dad.animation("singLEFT").expect("sing pose");
+        assert!(!sing.looping, "looping defaults to off");
+        assert_eq!(sing.fps, 24.0);
+        assert_eq!(sing.offset, (5.0, -3.0));
+        let frame = &sing.frames[0];
+        assert_eq!(frame.offset, (-1, -2), "trim offset is preserved");
+        assert_eq!(frame.source_size, Some((10, 12)), "source size is preserved");
+
+        assert!(
+            content
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("character 'bf'")),
+            "a missing character is reported, not hidden: {:?}",
+            content.warnings
+        );
+    }
+
+    #[test]
+    fn mod_health_icons_load_from_the_flat_layout() {
+        let temp = TempDir::new("codename-icons").unwrap();
+        temp.write("mod/data/characters/dad.xml", DAD_XML).unwrap();
+        temp.write_bytes("mod/images/characters/dadSheet.png", &png(16, 16, [9, 9, 9, 255]))
+            .unwrap();
+        temp.write("mod/images/characters/dadSheet.xml", SHEET_XML)
+            .unwrap();
+        // Vs Var Overhaul keeps icons as images/icons/<name>.png.
+        temp.write_bytes("mod/images/icons/neu.png", &png(7, 5, [200, 10, 10, 255]))
+            .unwrap();
+        let assets = temp.join("assets");
+        let mod_root = temp.join("mod");
+
+        let content = CodenameContent::load(assets.as_path(), Some(mod_root.as_path()), None);
+        let mut resources = GameResources::defaults().expect("resources");
+        content.apply_skin(&mut resources);
+
+        let icon = resources.texture(keys::ICON_OPPONENT);
+        assert_eq!((icon.width, icon.height), (7, 5), "the mod's own icon is used");
+        assert_eq!(icon.pixel(0, 0), Some([200, 10, 10, 255]));
+    }
+
+    #[test]
+    fn stage_sprites_cannot_name_files_outside_the_stage_folder() {
+        let temp = TempDir::new("codename-stage").unwrap();
+        temp.write(
+            "mod/data/stages/stage.xml",
+            r#"<!DOCTYPE codename-engine-stage>
+<stage name="stage" folder="stages/stage/" zoom="1">
+	<sprite name="ok" sprite="ok" x="0" y="0"/>
+	<sprite name="evil" sprite="../../../secret" x="0" y="0"/>
+</stage>"#,
+        )
+        .unwrap();
+        temp.write_bytes("mod/images/stages/stage/ok.png", &png(4, 4, [1, 2, 3, 255]))
+            .unwrap();
+        // This file exists, and would be reached by the traversal above.
+        temp.write_bytes("mod/secret.png", &png(4, 4, [255, 0, 0, 255]))
+            .unwrap();
+        let assets = temp.join("assets");
+        let mod_root = temp.join("mod");
+
+        let content = CodenameContent::load(assets.as_path(), Some(mod_root.as_path()), None);
+
+        assert_eq!(content.stage_layers.len(), 1, "only the honest sprite loads");
+        assert_eq!(content.stage_layers[0].name, "ok");
+        assert!(
+            content
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("secret")),
+            "the refused sprite is reported: {:?}",
+            content.warnings
+        );
+    }
 }
