@@ -1311,6 +1311,10 @@ impl Visuals {
 
     /// Plays the real Codename character rigs: player sings on its hit lane,
     /// opponent sings when its simulated notes fire, girlfriend idles.
+    ///
+    /// Each rig remembers when its current pose started, so a sing pose plays
+    /// from its first frame when a note triggers it and a non-looping pose holds
+    /// its last frame once it finishes, instead of being frozen on frame zero.
     fn codename_characters(
         &mut self,
         renderer: &mut Renderer3D,
@@ -1334,45 +1338,66 @@ impl Visuals {
         }
 
         for index in 0..self.rigs.len() {
-            let rig = &self.rigs[index];
-            set_visible(renderer, rig.node, visible);
-            if !visible {
-                continue;
-            }
-            let animation = match rig.role {
+            // The pose this rig should show, plus a token that changes whenever
+            // a new note triggers it, so repeated hits on one lane replay it.
+            let (wanted, token) = match self.rigs[index].role {
                 Role::Player => {
                     let hit = game
                         .hit_feedback()
                         .filter(|feedback| feedback.until_ms >= song_ms)
-                        .map(|feedback| (feedback.lane, false));
+                        .map(|feedback| (feedback.lane, false, feedback.until_ms));
                     let miss = game
                         .miss_feedback()
                         .filter(|feedback| feedback.until_ms >= song_ms)
-                        .map(|feedback| (feedback.lane, true));
+                        .map(|feedback| (feedback.lane, true, feedback.until_ms));
                     hit.or(miss)
-                        .map(|(lane, missed)| sing_animation(lane, missed))
-                        .unwrap_or_else(|| "idle".to_string())
+                        .map(|(lane, missed, until_ms)| {
+                            (sing_animation(lane, missed), until_ms.to_bits())
+                        })
+                        .unwrap_or_else(|| ("idle".to_string(), 0))
                 }
                 Role::Opponent => self
                     .last_opponent_sing
                     .filter(|(_, at)| song_ms - at <= 300.0)
-                    .map(|(lane, _)| sing_animation(lane, false))
-                    .unwrap_or_else(|| "idle".to_string()),
-                Role::Girlfriend => "idle".to_string(),
+                    .map(|(lane, at)| (sing_animation(lane, false), at.to_bits()))
+                    .unwrap_or_else(|| ("idle".to_string(), 0)),
+                Role::Girlfriend => ("idle".to_string(), 0),
             };
+
+            let rig = &mut self.rigs[index];
+            set_visible(renderer, rig.node, visible);
+            if !visible {
+                continue;
+            }
+
+            // A rig without the requested pose falls back to its idle loop.
+            let key = if rig
+                .animations
+                .get(&wanted)
+                .is_some_and(|anim| !anim.frames.is_empty())
+            {
+                wanted
+            } else {
+                "idle".to_string()
+            };
+            if rig.current != key || rig.token != token {
+                rig.current = key.clone();
+                rig.token = token;
+                rig.started_ms = song_ms;
+            }
             let Some(anim) = rig
                 .animations
-                .get(&animation)
-                .or_else(|| rig.animations.get("idle"))
+                .get(&key)
                 .filter(|anim| !anim.frames.is_empty())
             else {
                 continue;
             };
-            let frame_index = if anim.looping {
-                ((song_ms.max(0.0) / 1000.0 * anim.fps) as usize) % anim.frames.len()
-            } else {
-                0
-            };
+            let frame_index = animation_frame_index(
+                song_ms - rig.started_ms,
+                anim.fps,
+                anim.frames.len(),
+                anim.looping,
+            );
             let frame = &anim.frames[frame_index];
             if let Some(node) = renderer.scene.node_mut(rig.node) {
                 node.mesh = Some(frame.mesh);
@@ -1388,6 +1413,33 @@ impl Visuals {
                     Vec3::new(frame.size.x * rig.scale, frame.size.y * rig.scale, 1.0);
             }
         }
+    }
+}
+
+/// Which frame of an animation to show `elapsed_ms` after it started.
+///
+/// A looping animation wraps; a non-looping one holds its last frame once it
+/// has finished. Negative, NaN or infinite times show the first frame, and an
+/// unusable frame rate falls back to one frame per second.
+fn animation_frame_index(elapsed_ms: f32, fps: f32, frames: usize, looping: bool) -> usize {
+    if frames == 0 {
+        return 0;
+    }
+    let elapsed = if elapsed_ms.is_finite() {
+        elapsed_ms.max(0.0)
+    } else {
+        0.0
+    };
+    let fps = if fps.is_finite() && fps > 0.0 {
+        fps
+    } else {
+        1.0
+    };
+    let step = (elapsed / 1000.0 * fps) as usize;
+    if looping {
+        step % frames
+    } else {
+        step.min(frames - 1)
     }
 }
 
@@ -1416,6 +1468,12 @@ struct RigVisual {
     origin: Vec3,
     scale: f32,
     animations: BTreeMap<String, RigAnimVisual>,
+    /// Name of the animation currently shown.
+    current: String,
+    /// Identifies the note that triggered `current`, so a new note restarts it.
+    token: u32,
+    /// Song time at which `current` started playing.
+    started_ms: f32,
 }
 
 fn build_rig(
@@ -1451,19 +1509,15 @@ fn build_rig(
             } else {
                 renderer.meshes.insert(uv_quad_mesh(frame, &rig.texture)?)
             };
-            let (source_width, source_height) = frame
-                .source_size
-                .unwrap_or((frame.frame.width, frame.frame.height));
             // Trimmed Sparrow frames store a smaller rect plus an offset from
-            // the original frame's top-left. Centring the trimmed rect on the
-            // source frame keeps the character still between frames.
+            // the original frame's top-left. `centre_offset` applies Sparrow's
+            // sign convention (the draw offset is -frameX/-frameY), so the art
+            // stays where the untrimmed source frame put it and the character
+            // does not jitter between frames.
+            let (shift_x, shift_y) = frame.centre_offset();
             let offset = Vec2::new(
-                (frame.offset.0 as f32 + frame.frame.width as f32 * 0.5
-                    - source_width as f32 * 0.5)
-                    / CODENAME_PIXELS_PER_UNIT,
-                -(frame.offset.1 as f32 + frame.frame.height as f32 * 0.5
-                    - source_height as f32 * 0.5)
-                    / CODENAME_PIXELS_PER_UNIT,
+                shift_x / CODENAME_PIXELS_PER_UNIT,
+                -shift_y / CODENAME_PIXELS_PER_UNIT,
             );
             frames.push(RigFrameVisual {
                 mesh,
@@ -1524,6 +1578,9 @@ fn build_rig(
         origin,
         scale: rig.scale.max(0.01) * fit,
         animations,
+        current: String::new(),
+        token: 0,
+        started_ms: 0.0,
     })
 }
 
@@ -2342,6 +2399,120 @@ mod tests {
         assert!(
             tail.transform.translation.y > head_y,
             "the body trails above the head"
+        );
+    }
+
+    #[test]
+    fn animation_frames_advance_from_when_the_animation_started() {
+        // 10 fps: one frame every 100 ms.
+        assert_eq!(animation_frame_index(0.0, 10.0, 4, false), 0);
+        assert_eq!(animation_frame_index(99.0, 10.0, 4, false), 0);
+        assert_eq!(animation_frame_index(150.0, 10.0, 4, false), 1);
+        assert_eq!(animation_frame_index(250.0, 10.0, 4, false), 2);
+        // A non-looping animation holds its last frame once it has finished.
+        assert_eq!(animation_frame_index(10_000.0, 10.0, 4, false), 3);
+        // A looping animation wraps around.
+        assert_eq!(animation_frame_index(450.0, 10.0, 4, true), 0);
+        assert_eq!(animation_frame_index(550.0, 10.0, 4, true), 1);
+    }
+
+    #[test]
+    fn animation_frame_index_tolerates_bad_input() {
+        assert_eq!(animation_frame_index(-50.0, 10.0, 4, true), 0);
+        assert_eq!(animation_frame_index(f32::NAN, 10.0, 4, false), 0);
+        assert_eq!(animation_frame_index(f32::INFINITY, 10.0, 4, true), 0);
+        // An unusable frame rate falls back to one frame per second.
+        assert_eq!(animation_frame_index(500.0, 0.0, 4, false), 0);
+        assert_eq!(animation_frame_index(1_500.0, f32::NAN, 4, false), 1);
+        assert_eq!(animation_frame_index(100.0, 10.0, 0, true), 0);
+    }
+
+    /// A character whose idle loop has two frames and whose left sing pose has
+    /// three, all at 100 fps (10 ms per frame), on a 16x16 sheet.
+    fn test_rig(role: Role) -> CharacterRig {
+        use crate::codename_content::RigAnimation;
+
+        let frame = |name: &str, x: u32| AtlasFrame {
+            name: name.to_string(),
+            frame: fu_assets::AtlasRect {
+                x,
+                y: 0,
+                width: 4,
+                height: 4,
+            },
+            source_size: None,
+            offset: (0, 0),
+            rotated: false,
+        };
+        let mut animations = BTreeMap::new();
+        animations.insert(
+            "idle".to_string(),
+            RigAnimation {
+                frames: vec![frame("idle0000", 0), frame("idle0001", 4)],
+                fps: 100.0,
+                offset: (0.0, 0.0),
+                looping: true,
+            },
+        );
+        animations.insert(
+            "singLEFT".to_string(),
+            RigAnimation {
+                frames: vec![
+                    frame("left0000", 0),
+                    frame("left0001", 4),
+                    frame("left0002", 8),
+                ],
+                fps: 100.0,
+                offset: (0.0, 0.0),
+                looping: false,
+            },
+        );
+        CharacterRig {
+            role,
+            name: "test".to_string(),
+            texture: TextureAsset::solid(16, 16, [255, 255, 255, 255]),
+            animations,
+            position: (640.0, 360.0),
+            scale: 1.0,
+            flip_x: false,
+            scroll: 1.0,
+            icon: None,
+        }
+    }
+
+    #[test]
+    fn a_rig_sing_pose_plays_from_the_moment_a_note_triggers_it() {
+        let resources = GameResources::defaults().expect("resources");
+        let mut renderer = Renderer3D::new(fu_render3d::quality::QualitySettings::preset(
+            fu_render3d::quality::QualityLevel::Low,
+            fu_render3d::quality::Platform::Desktop,
+        ))
+        .expect("renderer");
+        let mut content = CodenameContent::default();
+        content
+            .characters
+            .insert(Role::Player, test_rig(Role::Player));
+        let mut visuals =
+            Visuals::with_codename(&mut renderer, &resources, &content).expect("visuals");
+        visuals.set_notes(&mut renderer, &chart()).expect("notes");
+        assert!(visuals.has_codename_content());
+
+        let mut game = Gameplay::new(chart());
+        game.update(1_000.0);
+        game.press(0, 1_000.0).expect("lane 0 hit");
+
+        // The pose starts at the first update that sees the hit (1000 ms), then
+        // advances every 10 ms and holds its last frame once it has finished.
+        let mut shown = Vec::new();
+        for at in [1_000.0, 1_015.0, 1_025.0, 1_040.0] {
+            visuals.update(&mut renderer, Screen::Playing, Some(&game), at, 16.0 / 9.0);
+            shown.push(node(&renderer, "character.player").mesh.expect("mesh"));
+        }
+        assert_ne!(shown[0], shown[1], "the pose advances to its second frame");
+        assert_ne!(shown[1], shown[2], "and to its third");
+        assert_eq!(
+            shown[2], shown[3],
+            "a finished non-looping pose holds its last frame"
         );
     }
 }
