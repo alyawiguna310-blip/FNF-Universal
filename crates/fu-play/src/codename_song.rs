@@ -18,8 +18,8 @@ use crate::song::{PlayableSong, SongError, TAIL_MS};
 
 use fu_chart::RuntimeChart;
 
-/// Time kept after the last note when the song length cannot be read from audio.
-/// Re-exported for convenience so callers do not need to know which loader they used.
+// Time kept after the last note when the song length cannot be read from audio.
+// Re-exported for convenience so callers do not need to know which loader they used.
 
 /// Returns true when `mod_root` looks like a Codename Engine mod directory.
 ///
@@ -45,10 +45,10 @@ pub fn is_codename_mod(mod_root: &Path) -> bool {
     if songs_dir.is_dir() {
         if let Ok(entries) = std::fs::read_dir(&songs_dir) {
             for entry in entries.flatten() {
-                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    if entry.path().join("meta.json").is_file() {
-                        return true;
-                    }
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                    && entry.path().join("meta.json").is_file()
+                {
+                    return true;
                 }
             }
         }
@@ -130,16 +130,17 @@ pub fn load_codename_song(
             .unwrap_or_else(|| "easy".to_string())
     };
 
-    if difficulty.is_some()
-        && !available_difficulties
+    if let Some(requested) = difficulty {
+        if !available_difficulties
             .iter()
             .any(|d| d.eq_ignore_ascii_case(&resolved_difficulty))
-    {
-        return Err(SongError::NoSuchDifficulty {
-            song: song.name.clone(),
-            requested: difficulty.unwrap().to_string(),
-            available: available_difficulties.clone(),
-        });
+        {
+            return Err(SongError::NoSuchDifficulty {
+                song: song.name.clone(),
+                requested: requested.to_string(),
+                available: available_difficulties.clone(),
+            });
+        }
     }
 
     // Find the chart for the resolved difficulty.
