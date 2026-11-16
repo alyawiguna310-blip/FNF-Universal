@@ -91,10 +91,49 @@ pub struct AtlasFrame {
     pub frame: AtlasRect,
     /// Original untrimmed size, when the frame was trimmed.
     pub source_size: Option<(u32, u32)>,
-    /// Trim offset in pixels, when the frame was trimmed.
+    /// `frameX` / `frameY` exactly as written in the XML, in pixels.
+    ///
+    /// Sparrow stores these as the *negative* of the draw offset; use
+    /// [`AtlasFrame::draw_offset`] or [`AtlasFrame::centre_offset`] rather than
+    /// applying them directly. Only whole numbers are represented: a fractional
+    /// value such as `frameX="-1.5"` (present in Codename's own note atlas)
+    /// currently reads as `0`.
     pub offset: (i32, i32),
     /// True when the stored frame is rotated inside the sheet.
     pub rotated: bool,
+}
+
+impl AtlasFrame {
+    /// Size of the untrimmed source frame: `frameWidth`/`frameHeight` when the
+    /// atlas declares them, otherwise the stored rectangle's own size.
+    pub fn source_dimensions(&self) -> (u32, u32) {
+        self.source_size
+            .unwrap_or((self.frame.width, self.frame.height))
+    }
+
+    /// Where the stored rectangle's top-left sits relative to the untrimmed
+    /// source frame's top-left, in pixels, y pointing down.
+    ///
+    /// This is `(-frameX, -frameY)`, the same convention Flixel's Sparrow loader
+    /// uses. For `frameX="-4"` the trimmed art starts 4 pixels to the right of the
+    /// source frame's left edge.
+    pub fn draw_offset(&self) -> (f32, f32) {
+        (-(self.offset.0 as f32), -(self.offset.1 as f32))
+    }
+
+    /// Offset of the stored rectangle's centre from the untrimmed source frame's
+    /// centre, in pixels, y pointing down.
+    ///
+    /// A renderer that centres every frame's quad on one fixed origin adds this
+    /// to the quad position so trimmed frames of one animation do not jitter.
+    pub fn centre_offset(&self) -> (f32, f32) {
+        let (dx, dy) = self.draw_offset();
+        let (source_width, source_height) = self.source_dimensions();
+        (
+            dx + self.frame.width as f32 * 0.5 - source_width as f32 * 0.5,
+            dy + self.frame.height as f32 * 0.5 - source_height as f32 * 0.5,
+        )
+    }
 }
 
 /// A parsed Sparrow atlas.
@@ -359,6 +398,28 @@ mod tests {
     <SubTexture name='note0000' x='96' y='0' width='24' height='24' rotated='false'></SubTexture>
 </TextureAtlas>"#;
 
+    /// Excerpt of Codename's real `assets/images/game/notes/default.xml`:
+    /// Adobe Animate comments, untrimmed frames, trimmed frames, and the
+    /// original misspelling of "pruple end hold". The real file also starts with
+    /// a byte-order mark, which `real_notes_document` prepends.
+    const REAL_NOTES: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<TextureAtlas imagePath="NOTE_assets.png">
+	<!-- Created with Adobe Animate version 21.0.1.37179 -->
+	<!-- http://www.adobe.com/products/animate.html -->
+	<SubTexture name="arrowLEFT0000" x="1289" y="2" width="154" height="156"/>
+	<SubTexture name="pruple end hold0000" x="478" y="693" width="50" height="64"/>
+
+	<SubTexture name="down confirm0000" x="2" y="2" width="238" height="235" frameX="-4" frameY="-5" frameWidth="238" frameHeight="235"/>
+	<SubTexture name="down press0000" x="1167" y="617" width="142" height="140" frameX="-4" frameY="-2" frameWidth="149" frameHeight="146"/>
+	<SubTexture name="down press0002" x="1225" y="318" width="149" height="146"/>
+	<SubTexture name="down press0010" x="1225" y="318" width="149" height="146"/>
+	<SubTexture name="down press0001" x="1167" y="617" width="142" height="140" frameX="-4" frameY="-2" frameWidth="149" frameHeight="146"/>
+</TextureAtlas>"#;
+
+    fn real_notes_document() -> String {
+        format!("\u{feff}{REAL_NOTES}")
+    }
+
     #[test]
     fn parses_sparrow_frames_and_image_path() {
         let atlas = SparrowAtlas::parse_xml(ATLAS).expect("atlas");
@@ -456,5 +517,65 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("not a number"), "got: {error}");
+    }
+
+    #[test]
+    fn the_real_notes_atlas_shape_parses_with_bom_and_comments() {
+        let atlas = SparrowAtlas::parse_xml(&real_notes_document()).expect("atlas");
+        assert_eq!(atlas.image_path.as_deref(), Some("NOTE_assets.png"));
+        assert_eq!(atlas.frames().len(), 7, "comments are not frames");
+
+        let hold_end = atlas.frame("pruple end hold0000").expect("misspelled frame");
+        assert_eq!(
+            hold_end.frame,
+            AtlasRect {
+                x: 478,
+                y: 693,
+                width: 50,
+                height: 64
+            }
+        );
+        assert_eq!(hold_end.source_size, None);
+        assert_eq!(hold_end.offset, (0, 0));
+
+        let names: Vec<&str> = atlas
+            .frames_for_prefix("down press")
+            .into_iter()
+            .map(|frame| frame.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "down press0000",
+                "down press0001",
+                "down press0002",
+                "down press0010"
+            ],
+            "document order is shuffled, playback order is numeric"
+        );
+    }
+
+    #[test]
+    fn trim_offsets_follow_the_sparrow_sign_convention() {
+        let atlas = SparrowAtlas::parse_xml(&real_notes_document()).expect("atlas");
+
+        // frameX=-4 / frameY=-2: the 142x140 art starts 4 px right and 2 px
+        // below the top-left of its 149x146 source frame.
+        let trimmed = atlas.frame("down press0000").expect("trimmed frame");
+        assert_eq!(trimmed.source_dimensions(), (149, 146));
+        assert_eq!(trimmed.draw_offset(), (4.0, 2.0));
+        assert_eq!(trimmed.centre_offset(), (0.5, -1.0));
+
+        // A frame whose rectangle fills its source frame but is nudged by the
+        // exporter (frameX=-4, frameY=-5) shifts by exactly that nudge.
+        let nudged = atlas.frame("down confirm0000").expect("nudged frame");
+        assert_eq!(nudged.source_dimensions(), (238, 235));
+        assert_eq!(nudged.centre_offset(), (4.0, 5.0));
+
+        // An untrimmed frame has no offset.
+        let plain = atlas.frame("down press0002").expect("untrimmed frame");
+        assert_eq!(plain.source_dimensions(), (149, 146));
+        assert_eq!(plain.draw_offset(), (0.0, 0.0));
+        assert_eq!(plain.centre_offset(), (0.0, 0.0));
     }
 }
