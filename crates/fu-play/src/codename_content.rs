@@ -1,22 +1,41 @@
 //! Optional real Codename Engine character and stage assets for the playfield.
-//! 
+//!
 //! The playable runtime ships a generated default pack, so it runs with no
 //! Codename installation. When one is available (`--codename <assets dir>`), this
 //! module reads the stage and character XML plus their Sparrow atlases so the
 //! playfield shows the game's own characters and backdrop instead of the
 //! generated placeholders.
-//! 
+//!
+//! Content is read through `fu-vfs`. [`mount_codename`] mounts the user's
+//! Codename assets directory and the selected mod as read-only layers of one
+//! virtual file system (the mod wins, the install is the fallback), and every
+//! character, stage, note skin and icon lookup goes through it as a virtual path
+//! such as `/images/game/notes/default.png`. Nothing is copied out of the
+//! installation and nothing in it is ever written.
+//!
 //! Only what the playfield draws is read: stage sprite layers, character sprite
 //! sheets and their named animations. Scripts, Animate atlases and stage scripts
 //! are reported as warnings rather than silently ignored.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use fu_assets::{AtlasFrame, SparrowAtlas, TextureAsset};
+use fu_vfs::{CaseSensitivity, MountPolicy, Vfs};
 
 use crate::resources::{keys, GameResources};
+
+/// Mount id of the user's Codename assets directory.
+pub const CODENAME_ASSETS_MOUNT: &str = "codename-assets";
+/// Mount id of the selected mod.
+pub const CODENAME_MOD_MOUNT: &str = "codename-mod";
+/// Priority of the Codename installation, the fallback layer.
+pub const CODENAME_ASSETS_PRIORITY: i32 = 10;
+/// Priority of the mod, which overrides the installation.
+pub const CODENAME_MOD_PRIORITY: i32 = 20;
 
 // Helper functions - must be defined before they are used
 
@@ -35,7 +54,7 @@ fn number(map: &BTreeMap<String, String>, key: &str, default: f32) -> f32 {
 ///
 /// Stage folders, sprite names and character ids come from mod XML and song
 /// metadata, which are untrusted, so every lookup goes through this check
-/// before it touches the file system.
+/// before it reaches the file system or the virtual file system.
 fn safe_relative(relative: &str) -> bool {
     !relative.is_empty()
         && !relative.starts_with('/')
@@ -46,6 +65,9 @@ fn safe_relative(relative: &str) -> bool {
 }
 
 /// `relative` inside one root, when it is a safe path to an existing file.
+///
+/// Only [`song_meta_path`] still resolves physical paths: it hands a host path
+/// to callers, which is not something the virtual file system returns.
 fn in_root(root: &Path, relative: &str) -> Option<PathBuf> {
     if !safe_relative(relative) {
         return None;
@@ -62,14 +84,75 @@ fn find_file(mod_root: Option<&Path>, assets: &Path, relative: &str) -> Option<P
     in_root(assets, relative)
 }
 
-fn read_texture(path: &Path) -> Option<TextureAsset> {
-    let bytes = std::fs::read(path).ok()?;
-    TextureAsset::decode_png(&bytes).ok()
-}
-
 fn read_json(path: &Path) -> Option<serde_json::Value> {
     let text = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&text).ok()
+}
+
+/// Mounts a Codename assets directory and, optionally, the selected mod as
+/// read-only layers of a new virtual file system, both rooted at `/`.
+///
+/// The mod (priority [`CODENAME_MOD_PRIORITY`]) overrides the installation
+/// (priority [`CODENAME_ASSETS_PRIORITY`]), and a file missing from the mod falls
+/// back to the installation. Both layers are read-only and match names
+/// case-insensitively, as Codename does on Windows.
+///
+/// A directory that cannot be mounted (missing, or not a directory) is reported
+/// in the returned warnings and that layer is left out; nothing else on disk is
+/// consulted in its place.
+pub fn mount_codename(assets: &Path, mod_root: Option<&Path>) -> (Vfs, Vec<String>) {
+    let mut vfs = Vfs::new();
+    let mut warnings = Vec::new();
+    if let Err(error) = vfs.mount_physical(
+        CODENAME_ASSETS_MOUNT,
+        "/",
+        assets,
+        CODENAME_ASSETS_PRIORITY,
+        MountPolicy::ReadOnly,
+        CaseSensitivity::Insensitive,
+    ) {
+        warnings.push(format!(
+            "codename assets directory {}: {error}",
+            assets.display()
+        ));
+    }
+    if let Some(mod_root) = mod_root {
+        if let Err(error) = vfs.mount_physical(
+            CODENAME_MOD_MOUNT,
+            "/",
+            mod_root,
+            CODENAME_MOD_PRIORITY,
+            MountPolicy::ReadOnly,
+            CaseSensitivity::Insensitive,
+        ) {
+            warnings.push(format!("mod directory {}: {error}", mod_root.display()));
+        }
+    }
+    (vfs, warnings)
+}
+
+/// True when `relative` names an existing entry in `vfs`.
+fn vfs_exists(vfs: &Vfs, relative: &str) -> bool {
+    safe_relative(relative) && vfs.exists(format!("/{relative}"))
+}
+
+/// Reads `relative` (such as `images/game/ready.png`) from `vfs`.
+fn read_bytes(vfs: &Vfs, relative: &str) -> Result<Vec<u8>, String> {
+    if !safe_relative(relative) {
+        return Err(format!("'{relative}' is not a safe relative path"));
+    }
+    vfs.read(format!("/{relative}"))
+        .map_err(|error| format!("{relative}: {error}"))
+}
+
+fn read_text(vfs: &Vfs, relative: &str) -> Result<String, String> {
+    let bytes = read_bytes(vfs, relative)?;
+    String::from_utf8(bytes).map_err(|error| format!("{relative} is not valid UTF-8: {error}"))
+}
+
+fn read_texture(vfs: &Vfs, relative: &str) -> Result<TextureAsset, String> {
+    let bytes = read_bytes(vfs, relative)?;
+    TextureAsset::decode_png(&bytes).map_err(|error| format!("{relative}: {error}"))
 }
 
 fn string_field(value: &serde_json::Value, names: &[&str]) -> Option<String> {
@@ -306,7 +389,8 @@ pub struct NoteSkin {
     pub texture: TextureAsset,
     /// Parsed Sparrow atlas.
     pub atlas: SparrowAtlas,
-    /// Path the sheet was read from, for diagnostics.
+    /// Virtual path the atlas was read from (for example
+    /// `/images/game/notes/default.xml`), for diagnostics.
     pub source: PathBuf,
 }
 
@@ -334,6 +418,28 @@ impl NoteSkin {
     }
 }
 
+/// The virtual file system a [`CodenameContent`] was loaded from.
+///
+/// It is kept so images requested after loading (health icons, countdown art,
+/// judgements) resolve through the same layers.
+#[derive(Clone, Default)]
+struct ContentVfs(Option<Arc<Vfs>>);
+
+impl ContentVfs {
+    fn get(&self) -> Option<&Vfs> {
+        self.0.as_deref()
+    }
+}
+
+impl fmt::Debug for ContentVfs {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.0 {
+            Some(vfs) => write!(formatter, "ContentVfs({} mount(s))", vfs.list_mounts().len()),
+            None => formatter.write_str("ContentVfs(unmounted)"),
+        }
+    }
+}
+
 /// Real Codename characters, stage and note skin for one song.
 #[derive(Debug, Default)]
 pub struct CodenameContent {
@@ -347,10 +453,12 @@ pub struct CodenameContent {
     pub stage_id: Option<String>,
     /// Everything that could not be loaded, as readable diagnostics.
     pub warnings: Vec<String>,
-    /// Codename assets directory.
+    /// Codename assets directory that was mounted, when loaded from host paths.
     pub assets: PathBuf,
-    /// Mod root checked before the base assets.
+    /// Mod root that was mounted over the base assets, when there is one.
     pub mod_root: Option<PathBuf>,
+    /// The layered virtual file system everything was read through.
+    vfs: ContentVfs,
     /// Set once a character anchor was seen; layers pushed afterwards draw
     /// in front of the characters (document order, as Codename does).
     char_anchor_seen: bool,
@@ -363,42 +471,61 @@ impl CodenameContent {
         self.characters.is_empty() && self.stage_layers.is_empty() && self.note_skin.is_none()
     }
 
+    /// The virtual file system this content was read through, when one was
+    /// mounted.
+    pub fn vfs(&self) -> Option<&Vfs> {
+        self.vfs.get()
+    }
+
     /// Loads the stage and characters one song uses.
-    /// 
+    ///
     /// `assets` is a Codename installation's `assets` directory; `mod_root` is
-    /// the selected mod, checked first so modded characters win over base ones.
+    /// the selected mod, mounted over it so modded characters win over base
+    /// ones. Both are mounted read-only through [`mount_codename`]; a directory
+    /// that cannot be mounted is reported in [`CodenameContent::warnings`].
     /// `song_meta` is the song's `meta.json`, whose `stage`, `player1`,
     /// `player2` and `gfVersion` fields select the content.
     pub fn load(assets: &Path, mod_root: Option<&Path>, song_meta: Option<&Path>) -> Self {
+        let (vfs, mount_warnings) = mount_codename(assets, mod_root);
+        let meta = song_meta.and_then(read_json);
+        let mut content = Self::load_from_vfs(Arc::new(vfs), meta.as_ref());
+        content.assets = assets.to_path_buf();
+        content.mod_root = mod_root.map(|p| p.to_path_buf());
+
+        let mut warnings = mount_warnings;
+        warnings.append(&mut content.warnings);
+        content.warnings = warnings;
+        content
+    }
+
+    /// Loads the stage and characters one song uses from an already mounted
+    /// virtual file system whose root holds Codename's `data/` and `images/`.
+    ///
+    /// `meta` is the song's parsed `meta.json`, when there is one.
+    pub fn load_from_vfs(vfs: Arc<Vfs>, meta: Option<&serde_json::Value>) -> Self {
         let mut content = Self {
-            assets: assets.to_path_buf(),
-            mod_root: mod_root.map(|p| p.to_path_buf()),
+            vfs: ContentVfs(Some(Arc::clone(&vfs))),
             ..Self::default()
         };
-        match load_note_skin(assets, mod_root) {
+        match load_note_skin(&vfs) {
             Ok(skin) => content.note_skin = Some(skin),
             Err(error) => content.warnings.push(format!("note skin: {error}")),
         }
-        let meta = song_meta.and_then(read_json);
         let stage = meta
-            .as_ref()
             .and_then(|meta| string_field(meta, &["stage"]))
             .unwrap_or_else(|| "stage".to_string());
         let player = meta
-            .as_ref()
             .and_then(|meta| string_field(meta, &["player1", "player"]))
             .unwrap_or_else(|| "bf".to_string());
         let opponent = meta
-            .as_ref()
             .and_then(|meta| string_field(meta, &["player2", "opponent"]))
             .unwrap_or_else(|| "dad".to_string());
         let girlfriend = meta
-            .as_ref()
             .and_then(|meta| string_field(meta, &["gfVersion", "girlfriend"]))
             .unwrap_or_else(|| "gf".to_string());
 
         let mut anchors = BTreeMap::new();
-        content.load_stage(assets, mod_root, &stage, &mut anchors);
+        content.load_stage(&vfs, &stage, &mut anchors);
 
         for (role, id) in [
             (Role::Player, player),
@@ -406,7 +533,7 @@ impl CodenameContent {
             (Role::Girlfriend, girlfriend),
         ] {
             let anchor = anchors.get(&role).copied();
-            match load_character(assets, mod_root, role, &id, anchor) {
+            match load_character(&vfs, role, &id, anchor) {
                 Ok(rig) => {
                     content.characters.insert(role, rig);
                 }
@@ -420,20 +547,23 @@ impl CodenameContent {
 
     fn load_stage(
         &mut self,
-        assets: &Path,
-        mod_root: Option<&Path>,
+        vfs: &Vfs,
         stage: &str,
         anchors: &mut BTreeMap<Role, (f32, f32)>,
     ) {
-        let Some(path) = find_file(mod_root, assets, &format!("data/stages/{stage}.xml")) else {
+        let definition = format!("data/stages/{stage}.xml");
+        if !vfs_exists(vfs, &definition) {
             self.warnings
                 .push(format!("stage '{stage}' has no definition in data/stages"));
             return;
-        };
-        let Ok(xml) = std::fs::read_to_string(&path) else {
-            self.warnings
-                .push(format!("stage '{stage}' could not be read at {path:?}"));
-            return;
+        }
+        let xml = match read_text(vfs, &definition) {
+            Ok(xml) => xml,
+            Err(error) => {
+                self.warnings
+                    .push(format!("stage '{stage}' could not be read: {error}"));
+                return;
+            }
         };
         let Some(stage_tag) = first_tag(&xml, "stage") else {
             self.warnings
@@ -459,21 +589,16 @@ impl CodenameContent {
                         continue;
                     };
                     let relative = format!("images/{folder}{sprite}.png");
-                    let Some(image) = find_file(mod_root, assets, &relative) else {
+                    if !vfs_exists(vfs, &relative) {
                         self.warnings
                             .push(format!("stage '{stage}': missing image {relative}"));
                         continue;
-                    };
-                    let Ok(bytes) = std::fs::read(&image) else {
-                        self.warnings
-                            .push(format!("stage '{stage}': unreadable image {relative}"));
-                        continue;
-                    };
-                    let texture = match TextureAsset::decode_png(&bytes) {
+                    }
+                    let texture = match read_texture(vfs, &relative) {
                         Ok(texture) => texture,
                         Err(error) => {
                             self.warnings.push(format!(
-                                "stage '{stage}': could not decode {relative}: {error}"
+                                "stage '{stage}': could not load image {relative}: {error}"
                             ));
                             continue;
                         }
@@ -527,7 +652,7 @@ impl CodenameContent {
 
 impl CodenameContent {
     /// Replaces the generated gameplay textures with the real Codename art.
-    /// 
+    ///
     /// Keys are the same logical names the playfield already uses, so every
     /// consumer switches to the real sprites without knowing where they came
     /// from. Anything missing is left as the generated fallback and reported.
@@ -602,55 +727,65 @@ impl CodenameContent {
         }
     }
 
-    /// Reads an image from the mod first, then the base assets.
+    /// Reads an image through the virtual file system: the mod layer first,
+    /// then the base assets.
     fn image(&self, relative: &str) -> Option<TextureAsset> {
-        let path = find_file(self.mod_root.as_deref(), &self.assets, relative)?;
-        read_texture(&path)
+        read_texture(self.vfs.get()?, relative).ok()
     }
 
     /// Reads a health-icon sheet.
     ///
     /// Codename's base installation keeps each icon in its own folder
     /// (`images/icons/bf/icon.png`), while mods such as Vs Var Overhaul ship
-    /// flat files (`images/icons/neu.png`). Both layouts are accepted, and the
-    /// mod's files win over the base installation's whichever layout they use.
+    /// flat files (`images/icons/neu.png`). Both layouts are accepted. The layer
+    /// with the higher mount priority (the mod) wins whichever layout it uses; at
+    /// equal priority the folder layout is preferred.
     fn icon_image(&self, icon: &str) -> Option<TextureAsset> {
+        let vfs = self.vfs.get()?;
         let candidates = [
             format!("images/icons/{icon}/icon.png"),
             format!("images/icons/{icon}.png"),
         ];
-        let roots = self
-            .mod_root
-            .as_deref()
-            .into_iter()
-            .chain(std::iter::once(self.assets.as_path()));
-        for root in roots {
-            for relative in &candidates {
-                if let Some(texture) = in_root(root, relative).and_then(|path| read_texture(&path))
-                {
-                    return Some(texture);
-                }
+        let mut best: Option<(i32, TextureAsset)> = None;
+        for relative in &candidates {
+            if !safe_relative(relative) {
+                continue;
+            }
+            let Ok(output) = vfs.read_with_provenance(format!("/{relative}")) else {
+                continue;
+            };
+            let Ok(texture) = TextureAsset::decode_png(&output.bytes) else {
+                continue;
+            };
+            let better = match &best {
+                None => true,
+                Some((priority, _)) => output.mount_priority > *priority,
+            };
+            if better {
+                best = Some((output.mount_priority, texture));
             }
         }
-        None
+        best.map(|(_, texture)| texture)
     }
 }
 
-fn load_note_skin(assets: &Path, mod_root: Option<&Path>) -> Result<NoteSkin, String> {
-    let image = find_file(mod_root, assets, "images/game/notes/default.png")
-        .ok_or("missing images/game/notes/default.png")?;
-    let atlas_path = find_file(mod_root, assets, "images/game/notes/default.xml")
-        .ok_or("missing images/game/notes/default.xml")?;
-    let bytes = std::fs::read(&image).map_err(|error| error.to_string())?;
-    let texture = TextureAsset::decode_png(&bytes)
-        .map_err(|error| format!("{}: {error}", image.display()))?;
-    let atlas_xml = std::fs::read_to_string(&atlas_path).map_err(|error| error.to_string())?;
-    let atlas = SparrowAtlas::parse_xml(&atlas_xml)
-        .map_err(|error| format!("{}: {error}", atlas_path.display()))?;
+fn load_note_skin(vfs: &Vfs) -> Result<NoteSkin, String> {
+    let image = "images/game/notes/default.png";
+    let atlas_path = "images/game/notes/default.xml";
+    if !vfs_exists(vfs, image) {
+        return Err(format!("missing {image}"));
+    }
+    if !vfs_exists(vfs, atlas_path) {
+        return Err(format!("missing {atlas_path}"));
+    }
+    let texture = read_texture(vfs, image)?;
+    let atlas_xml = read_text(vfs, atlas_path)?;
+    let atlas =
+        SparrowAtlas::parse_xml(&atlas_xml).map_err(|error| format!("{atlas_path}: {error}"))?;
     Ok(NoteSkin {
         texture,
         atlas,
-        source: atlas_path,
+        source: PathBuf::from(format!("/{atlas_path}")),
     })
 }
 
@@ -708,16 +843,16 @@ fn frames_for_indices(atlas: &SparrowAtlas, prefix: &str, indices: &str) -> Vec<
 }
 
 fn load_character(
-    assets: &Path,
-    mod_root: Option<&Path>,
+    vfs: &Vfs,
     role: Role,
     id: &str,
     anchor: Option<(f32, f32)>,
 ) -> Result<CharacterRig, String> {
     let relative = format!("data/characters/{id}.xml");
-    let path = find_file(mod_root, assets, &relative)
-        .ok_or_else(|| format!("no definition at {relative}"))?;
-    let xml = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    if !vfs_exists(vfs, &relative) {
+        return Err(format!("no definition at {relative}"));
+    }
+    let xml = read_text(vfs, &relative)?;
     let tag = first_tag(&xml, "character").ok_or("no <character> element")?;
     let character_attributes = attributes(&tag);
     let sprite = character_attributes
@@ -734,22 +869,19 @@ fn load_character(
     let (image, atlas_path) = candidates
         .iter()
         .find_map(|base| {
-            Some((
-                find_file(mod_root, assets, &format!("{base}.png"))?,
-                find_file(mod_root, assets, &format!("{base}.xml"))?,
-            ))
+            let image = format!("{base}.png");
+            let atlas = format!("{base}.xml");
+            (vfs_exists(vfs, &image) && vfs_exists(vfs, &atlas)).then_some((image, atlas))
         })
         .ok_or_else(|| {
             format!(
                 "missing Sparrow sheet for sprite '{sprite}' (looked for images/characters/{sprite}.png and its .xml; Animate atlases are not supported)"
             )
         })?;
-    let bytes = std::fs::read(&image).map_err(|error| error.to_string())?;
-    let texture = TextureAsset::decode_png(&bytes)
-        .map_err(|error| format!("{}: {error}", image.display()))?;
-    let atlas_xml = std::fs::read_to_string(&atlas_path).map_err(|error| error.to_string())?;
-    let atlas = SparrowAtlas::parse_xml(&atlas_xml)
-        .map_err(|error| format!("{}: {error}", atlas_path.display()))?;
+    let texture = read_texture(vfs, &image)?;
+    let atlas_xml = read_text(vfs, &atlas_path)?;
+    let atlas =
+        SparrowAtlas::parse_xml(&atlas_xml).map_err(|error| format!("{atlas_path}: {error}"))?;
 
     let mut animations = BTreeMap::new();
     for element in elements(&xml) {
@@ -816,6 +948,10 @@ fn load_character(
 
 /// Song metadata path used by Codename: the mod's copy first, then the base
 /// installation's.
+///
+/// This returns a host path for callers that want to read the file themselves,
+/// so it is the one lookup that still resolves against the host file system
+/// instead of the virtual one.
 pub fn song_meta_path(assets: &Path, mod_root: Option<&Path>, song_id: &str) -> Option<PathBuf> {
     let relative = format!("songs/{song_id}/meta.json");
     find_file(mod_root, assets, &relative)
@@ -866,6 +1002,11 @@ mod tests {
 	<SubTexture name="Dad Sing note UP0000" x="0" y="4" width="4" height="4"/>
 </TextureAtlas>"#;
 
+    /// A synthetic note skin: one note frame and nothing else.
+    const NOTE_SKIN_XML: &str = r#"<TextureAtlas imagePath="default.png">
+	<SubTexture name="purple0000" x="2" y="1" width="8" height="6"/>
+</TextureAtlas>"#;
+
     #[test]
     fn relative_paths_cannot_leave_their_root() {
         assert!(safe_relative("images/a.png"));
@@ -896,6 +1037,124 @@ mod tests {
 
         assert!(find_file(Some(mod_root.as_path()), assets.as_path(), "../secret.txt").is_none());
         assert!(find_file(None, assets.as_path(), "images/../../secret.txt").is_none());
+    }
+
+    #[test]
+    fn the_mounts_are_read_only_and_leave_the_install_untouched() {
+        let temp = TempDir::new("codename-readonly").unwrap();
+        temp.write("assets/images/a.txt", "base").unwrap();
+        let assets = temp.join("assets");
+
+        let (vfs, warnings) = mount_codename(assets.as_path(), None);
+        assert!(warnings.is_empty(), "a good directory mounts cleanly: {warnings:?}");
+        assert_eq!(vfs.read("/images/a.txt").unwrap(), b"base");
+        assert_eq!(
+            vfs.read("/IMAGES/A.TXT").unwrap(),
+            b"base",
+            "names match case-insensitively, as Codename does on Windows"
+        );
+
+        assert!(
+            vfs.write("/images/a.txt", b"changed").is_err(),
+            "an existing file cannot be overwritten"
+        );
+        assert!(
+            vfs.write("/images/new.txt", b"new").is_err(),
+            "a new file cannot be created"
+        );
+        assert!(vfs.create_dir("/images/fresh").is_err());
+
+        assert_eq!(
+            std::fs::read_to_string(assets.join("images/a.txt")).unwrap(),
+            "base",
+            "the file on disk is unchanged"
+        );
+        assert!(!assets.join("images/new.txt").exists());
+        assert!(!assets.join("images/fresh").exists());
+    }
+
+    #[test]
+    fn missing_or_invalid_directories_are_reported_not_hidden() {
+        let temp = TempDir::new("codename-bad-mounts").unwrap();
+        temp.write("a-file.txt", "not a directory").unwrap();
+
+        let missing = temp.join("does-not-exist");
+        let (_vfs, warnings) = mount_codename(missing.as_path(), None);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("codename assets directory"), "{warnings:?}");
+
+        let file = temp.join("a-file.txt");
+        let (_vfs, warnings) = mount_codename(file.as_path(), None);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("codename assets directory"), "{warnings:?}");
+
+        let (_vfs, warnings) = mount_codename(missing.as_path(), Some(missing.as_path()));
+        assert_eq!(warnings.len(), 2, "both layers fail separately: {warnings:?}");
+        assert!(warnings[1].contains("mod directory"), "{warnings:?}");
+
+        // Loading from a missing installation finds nothing and says why; it
+        // does not wander off to other files.
+        let content = CodenameContent::load(missing.as_path(), None, None);
+        assert!(content.is_empty());
+        assert!(content.vfs().is_some());
+        assert!(
+            content
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("codename assets directory")),
+            "{:?}",
+            content.warnings
+        );
+        assert!(
+            content.warnings.iter().any(|warning| warning.contains("note skin")),
+            "{:?}",
+            content.warnings
+        );
+    }
+
+    #[test]
+    fn the_mod_layer_wins_and_the_install_is_the_fallback() {
+        let temp = TempDir::new("codename-layers").unwrap();
+        temp.write("assets/data/shared.xml", "base").unwrap();
+        temp.write("assets/data/base-only.xml", "base only").unwrap();
+        temp.write("mod/data/shared.xml", "mod").unwrap();
+        let assets = temp.join("assets");
+        let mod_root = temp.join("mod");
+
+        let (vfs, warnings) = mount_codename(assets.as_path(), Some(mod_root.as_path()));
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        assert_eq!(read_text(&vfs, "data/shared.xml"), Ok("mod".to_string()));
+        assert_eq!(
+            read_text(&vfs, "data/base-only.xml"),
+            Ok("base only".to_string())
+        );
+        assert!(vfs_exists(&vfs, "data/base-only.xml"));
+        assert!(!vfs_exists(&vfs, "data/nowhere.xml"));
+    }
+
+    #[test]
+    fn unsafe_and_missing_paths_are_errors_not_reads() {
+        let temp = TempDir::new("codename-invalid-paths").unwrap();
+        temp.write("assets/images/ok.txt", "ok").unwrap();
+        temp.write("secret.txt", "secret").unwrap();
+        let assets = temp.join("assets");
+        let (vfs, _) = mount_codename(assets.as_path(), None);
+
+        assert!(read_bytes(&vfs, "images/ok.txt").is_ok());
+        for bad in [
+            "../secret.txt",
+            "images/../../secret.txt",
+            "/images/ok.txt",
+            "C:/secret.txt",
+            "images\\ok.txt",
+            "",
+        ] {
+            assert!(read_bytes(&vfs, bad).is_err(), "'{bad}' must be refused");
+            assert!(!vfs_exists(&vfs, bad), "'{bad}' must not exist");
+        }
+        assert!(read_bytes(&vfs, "images/missing.txt").is_err());
+        assert!(read_texture(&vfs, "images/ok.txt").is_err(), "not a PNG");
     }
 
     #[test]
@@ -943,6 +1202,25 @@ mod tests {
     }
 
     #[test]
+    fn a_character_in_the_install_loads_through_the_vfs_without_a_mod() {
+        let temp = TempDir::new("codename-install-character").unwrap();
+        temp.write("assets/data/characters/dad.xml", DAD_XML).unwrap();
+        temp.write_bytes(
+            "assets/images/characters/dadSheet.png",
+            &png(16, 16, [9, 9, 9, 255]),
+        )
+        .unwrap();
+        temp.write("assets/images/characters/dadSheet.xml", SHEET_XML)
+            .unwrap();
+        let assets = temp.join("assets");
+
+        let content = CodenameContent::load(assets.as_path(), None, None);
+        assert!(content.characters.contains_key(&Role::Opponent));
+        assert!(content.mod_root.is_none());
+        assert_eq!(content.assets, assets);
+    }
+
+    #[test]
     fn mod_health_icons_load_from_the_flat_layout() {
         let temp = TempDir::new("codename-icons").unwrap();
         temp.write("mod/data/characters/dad.xml", DAD_XML).unwrap();
@@ -963,6 +1241,163 @@ mod tests {
         let icon = resources.texture(keys::ICON_OPPONENT);
         assert_eq!((icon.width, icon.height), (7, 5), "the mod's own icon is used");
         assert_eq!(icon.pixel(0, 0), Some([200, 10, 10, 255]));
+    }
+
+    #[test]
+    fn a_mod_icon_beats_the_installs_folder_layout_icon() {
+        let temp = TempDir::new("codename-icon-priority").unwrap();
+        temp.write("mod/data/characters/dad.xml", DAD_XML).unwrap();
+        temp.write_bytes("mod/images/characters/dadSheet.png", &png(16, 16, [9, 9, 9, 255]))
+            .unwrap();
+        temp.write("mod/images/characters/dadSheet.xml", SHEET_XML)
+            .unwrap();
+        temp.write_bytes("mod/images/icons/neu.png", &png(7, 5, [200, 10, 10, 255]))
+            .unwrap();
+        // The install has the same icon in the base layout, which is tried first.
+        temp.write_bytes(
+            "assets/images/icons/neu/icon.png",
+            &png(3, 3, [10, 200, 10, 255]),
+        )
+        .unwrap();
+        let assets = temp.join("assets");
+        let mod_root = temp.join("mod");
+
+        let content = CodenameContent::load(assets.as_path(), Some(mod_root.as_path()), None);
+        let mut resources = GameResources::defaults().expect("resources");
+        content.apply_skin(&mut resources);
+        let icon = resources.texture(keys::ICON_OPPONENT);
+        assert_eq!((icon.width, icon.height), (7, 5), "the higher-priority layer wins");
+
+        // Without a mod icon, the install's folder layout is the fallback.
+        let content = CodenameContent::load(assets.as_path(), None, None);
+        let mut resources = GameResources::defaults().expect("resources");
+        let mut installed = CodenameContent::load_from_vfs(
+            Arc::new(mount_codename(assets.as_path(), None).0),
+            None,
+        );
+        assert!(content.is_empty() || installed.characters.is_empty());
+        installed.characters.insert(
+            Role::Opponent,
+            CharacterRig {
+                role: Role::Opponent,
+                name: "dad".to_string(),
+                texture: TextureAsset::solid(1, 1, [0, 0, 0, 255]),
+                animations: BTreeMap::new(),
+                position: (0.0, 0.0),
+                scale: 1.0,
+                flip_x: false,
+                scroll: 1.0,
+                icon: Some("neu".to_string()),
+            },
+        );
+        installed.apply_skin(&mut resources);
+        let icon = resources.texture(keys::ICON_OPPONENT);
+        assert_eq!((icon.width, icon.height), (3, 3), "the install's icon is the fallback");
+    }
+
+    #[test]
+    fn the_note_skin_judgements_and_countdown_load_through_the_vfs() {
+        let temp = TempDir::new("codename-note-skin").unwrap();
+        temp.write("assets/images/game/notes/default.xml", NOTE_SKIN_XML)
+            .unwrap();
+        temp.write_bytes(
+            "assets/images/game/notes/default.png",
+            &png(16, 8, [30, 60, 90, 255]),
+        )
+        .unwrap();
+        temp.write_bytes("assets/images/game/score/sick.png", &png(5, 3, [1, 2, 3, 255]))
+            .unwrap();
+        temp.write_bytes("assets/images/game/ready.png", &png(6, 2, [4, 5, 6, 255]))
+            .unwrap();
+        let assets = temp.join("assets");
+
+        let content = CodenameContent::load(assets.as_path(), None, None);
+        let skin = content.note_skin.as_ref().expect("the note skin loads");
+        assert_eq!(
+            skin.source,
+            PathBuf::from("/images/game/notes/default.xml"),
+            "the source is a virtual path"
+        );
+        assert_eq!(skin.atlas.frames().len(), 1);
+
+        let mut resources = GameResources::defaults().expect("resources");
+        content.apply_skin(&mut resources);
+
+        let note = resources.texture(keys::NOTE_LEFT);
+        assert_eq!((note.width, note.height), (8, 6), "the frame is cropped from the sheet");
+        let judgement = resources.texture(keys::JUDGEMENT_PERFECT);
+        assert_eq!((judgement.width, judgement.height), (5, 3));
+        let countdown = resources.texture(keys::COUNTDOWN_3);
+        assert_eq!((countdown.width, countdown.height), (6, 2));
+    }
+
+    #[test]
+    fn a_missing_note_skin_is_reported() {
+        let temp = TempDir::new("codename-no-note-skin").unwrap();
+        temp.write("assets/images/game/notes/default.xml", NOTE_SKIN_XML)
+            .unwrap();
+        // The XML exists but its sheet does not.
+        let assets = temp.join("assets");
+
+        let content = CodenameContent::load(assets.as_path(), None, None);
+        assert!(content.note_skin.is_none());
+        assert!(
+            content
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("note skin: missing images/game/notes/default.png")),
+            "{:?}",
+            content.warnings
+        );
+    }
+
+    #[test]
+    fn stages_load_their_layers_through_the_vfs() {
+        let temp = TempDir::new("codename-stage-layers").unwrap();
+        temp.write(
+            "assets/data/stages/stage.xml",
+            r#"<!DOCTYPE codename-engine-stage>
+<stage zoom="0.9" name="stage" folder="stages/default/">
+	<sprite name="bg" x="-600" y="-200" sprite="stageback" scroll="0.9" />
+	<girlfriend />
+	<dad />
+	<boyfriend />
+	<sprite name="curtains" x="-500" y="-300" sprite="stagecurtains" scroll="1.3" />
+	<sprite name="gone" x="0" y="0" sprite="nothing" />
+</stage>"#,
+        )
+        .unwrap();
+        temp.write_bytes(
+            "assets/images/stages/default/stageback.png",
+            &png(4, 4, [1, 1, 1, 255]),
+        )
+        .unwrap();
+        temp.write_bytes(
+            "assets/images/stages/default/stagecurtains.png",
+            &png(2, 2, [2, 2, 2, 255]),
+        )
+        .unwrap();
+        let assets = temp.join("assets");
+
+        let content = CodenameContent::load(assets.as_path(), None, None);
+        let names: Vec<&str> = content
+            .stage_layers
+            .iter()
+            .map(|layer| layer.name.as_str())
+            .collect();
+        assert_eq!(names, ["bg", "curtains"], "layers keep document order");
+        assert!(!content.stage_layers[0].front, "declared before the characters");
+        assert!(content.stage_layers[1].front, "declared after the characters");
+        assert_eq!(content.stage_layers[0].scroll, (0.9, 0.9));
+        assert_eq!(content.stage_layers[0].zoom, 0.9);
+        assert!(
+            content
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("missing image images/stages/default/nothing.png")),
+            "{:?}",
+            content.warnings
+        );
     }
 
     #[test]
