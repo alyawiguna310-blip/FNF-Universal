@@ -69,25 +69,40 @@ winter horrorland, senpai, roses, thorns, guns, stress, ugh, test.
   judgements** are `images/game/notes/default.{png,xml}` and
   `images/game/score/*.png`. **Countdown** is `images/game/{ready,set,go}.png`.
 
+## How content is mounted
+
+`fu_play::codename_content::mount_codename(assets, mod_root)` builds one `Vfs`:
+
+| Mount id | Source | Mount point | Priority | Policy | Case |
+| --- | --- | --- | --- | --- | --- |
+| `codename-assets` | the user's `--codename <assets dir>` | `/` | 10 | read-only | insensitive |
+| `codename-mod` | the selected mod directory | `/` | 20 | read-only | insensitive |
+
+A virtual path such as `/data/characters/dad.xml` resolves in the mod first and
+falls back to the installation. A directory that is missing or is not a
+directory is reported in `CodenameContent::warnings` and that layer is left out;
+nothing else on disk is consulted in its place. Writes are refused by the mount
+policy, so the installation is never modified. `..`, absolute paths, drive
+prefixes and backslashes in XML and metadata are refused before a lookup.
+
 ## What can be loaded today
 
 | Need | Format | Status |
 | --- | --- | --- |
-| Note skin, receptors, sustains | Sparrow | Loaded (`CodenameContent::apply_skin`), except fractional `frameX` reads as 0 |
-| Judgement images | PNG | Loaded |
-| Health icons | PNG | Loaded; the sheet is drawn whole into a square (frame layout not inspected) |
-| Dad, Bopeebo opponent, `bf`, `mom`, `pico`, `spooky`, `monster`, `tankman`, `senpai` | Sparrow + XML | Loadable. `indices` now honoured; `-loop` follow-up animations, `holdTime`, `isPlayer` and Animate `pivotX/pivotY` are not used |
+| Note skin, receptors, sustains | Sparrow | Loaded through the VFS, except fractional `frameX` reads as 0 |
+| Judgement images, countdown | PNG | Loaded through the VFS |
+| Health icons | PNG | Loaded through the VFS in the base (`icons/<name>/icon.png`) and mod (`icons/<name>.png`) layouts; the sheet is drawn whole into a square (frame layout not inspected) |
+| Dad, Bopeebo opponent, `bf`, `mom`, `pico`, `spooky`, `monster`, `tankman`, `senpai` | Sparrow + XML | Loaded through the VFS. `indices` honoured; `-loop` follow-up animations, `holdTime`, `isPlayer` and Animate `pivotX/pivotY` are not used |
 | **`gf`, `gf-car`, `gf-christmas`, `gf-tankmen`** | Animate folder | **Not drawn.** `AnimateAtlas::parse` reads `Animation.json` only, uses placeholder UVs and a 512x512 sheet, and never reads `spritemap1.json` |
 | `spirit` | `.txt` atlas | Not supported |
-| Week 1 stage (`stage.xml`) | XML + PNG | Loadable; `startCamPosX/Y` ignored |
+| Week 1 stage (`stage.xml`) | XML + PNG | Loaded through the VFS; `startCamPosX/Y` ignored |
 | Stages with `.hx` scripts | scripts | Layers load; scripts are never run |
 | Songs, charts, audio | JSON + OGG | Loaded by `load_codename_song` through `fu-vfs` |
 | Weeks | `week*.xml` | Not parsed |
 | Fonts, `alphabet.xml` | bitmap font XML | Not parsed; the HUD uses a built-in bitmap font |
 
-Everything marked loaded still goes through `CodenameContent`, which reads with
-`std::fs` rather than `fu-vfs`. Songs go through the VFS; characters, stages and
-the note skin do not.
+The one remaining host-path lookup is `song_meta_path`, which returns a `PathBuf`
+for callers that read the file themselves.
 
 ## Week 1 needs (the smallest playable slice)
 
@@ -113,9 +128,8 @@ show its spectator until the Animate renderer path exists.
 
 ## Next milestones
 
-1. Mount the Codename `assets` directory and the mod as `fu-vfs` layers and make
-   `CodenameContent` read through it, so default content resolves with the same
-   priority and case rules as everything else.
+1. ~~Mount the Codename `assets` directory and the mod as `fu-vfs` layers and make
+   `CodenameContent` read through it.~~ Done; see "How content is mounted".
 2. Animate atlas rendering (`spritemap1.json` rectangles, symbol timelines) so
    `gf` shows.
 3. `-loop` follow-up animations and `holdTime`.
