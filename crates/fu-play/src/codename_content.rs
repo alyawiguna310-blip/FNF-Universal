@@ -654,6 +654,59 @@ fn load_note_skin(assets: &Path, mod_root: Option<&Path>) -> Result<NoteSkin, St
     })
 }
 
+/// Longest `a..b` range an `indices` attribute may expand to. Real characters
+/// stay far below this (Codename's `dad` uses at most 60 frames), so the cap
+/// only stops a hostile mod from expanding one attribute into millions of
+/// entries.
+const MAX_INDEX_RANGE: u32 = 10_000;
+
+/// Parses a Codename `indices` attribute such as `2..12,0,1`.
+///
+/// Entries are comma separated. An entry is either one frame number or an
+/// inclusive ascending range `a..b`. The base game's `dad` character shows the
+/// range is inclusive: its idle animation lists `2..12,0,1` and its atlas has
+/// frames `0000` to `0012`, and `56..59` ends on the last of `Dad Sing note UP`'s
+/// sixty frames. Returns `None` when any entry is malformed, descending, or
+/// longer than [`MAX_INDEX_RANGE`].
+fn parse_indices(text: &str) -> Option<Vec<u32>> {
+    let mut indices = Vec::new();
+    for part in text.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        match part.split_once("..") {
+            Some((start, end)) => {
+                let start: u32 = start.trim().parse().ok()?;
+                let end: u32 = end.trim().parse().ok()?;
+                if start > end || end - start > MAX_INDEX_RANGE {
+                    return None;
+                }
+                indices.extend(start..=end);
+            }
+            None => indices.push(part.parse().ok()?),
+        }
+    }
+    Some(indices)
+}
+
+/// The frames an animation with an `indices` attribute plays, in that order.
+///
+/// Like Flixel's `addByIndices`, each index selects the frame named
+/// `<prefix><index padded to four digits>`, so repeated indices repeat a frame
+/// and an index with no such frame is skipped. A malformed attribute yields no
+/// frames, which makes the animation absent instead of playing the wrong frames.
+fn frames_for_indices(atlas: &SparrowAtlas, prefix: &str, indices: &str) -> Vec<AtlasFrame> {
+    let Some(indices) = parse_indices(indices) else {
+        return Vec::new();
+    };
+    indices
+        .iter()
+        .filter_map(|index| atlas.frame(&format!("{prefix}{index:04}")))
+        .cloned()
+        .collect()
+}
+
 fn load_character(
     assets: &Path,
     mod_root: Option<&Path>,
@@ -711,11 +764,17 @@ fn load_character(
             .get("anim")
             .cloned()
             .unwrap_or_else(|| name.clone());
-        let frames: Vec<AtlasFrame> = atlas
-            .frames_for_prefix(&prefix)
-            .into_iter()
-            .cloned()
-            .collect();
+        // `indices` picks and orders frames explicitly (the base game's idle
+        // loops and held sing poses rely on it); without it, every frame with
+        // the prefix plays in numeric order.
+        let frames: Vec<AtlasFrame> = match anim_attributes.get("indices") {
+            Some(indices) => frames_for_indices(&atlas, &prefix, indices),
+            None => atlas
+                .frames_for_prefix(&prefix)
+                .into_iter()
+                .cloned()
+                .collect(),
+        };
         if frames.is_empty() {
             continue;
         }
@@ -784,6 +843,27 @@ mod tests {
 	<SubTexture name="idle0000" x="0" y="0" width="8" height="8"/>
 	<SubTexture name="idle0001" x="8" y="0" width="8" height="8"/>
 	<SubTexture name="left0000" x="0" y="8" width="8" height="8" frameX="-1" frameY="-2" frameWidth="10" frameHeight="12"/>
+</TextureAtlas>"#;
+
+    /// The attribute syntax and frame naming of the base game's `dad`
+    /// (spaces and mixed case in prefixes, `indices` with ranges and repeats,
+    /// `-loop` variants), on a tiny synthetic sheet so no game asset is copied.
+    const INDEXED_XML: &str = r#"<!DOCTYPE codename-engine-character>
+<character sprite="dadSheet" icon="dad" holdTime="6.1">
+	<anim name="idle" anim="Dad idle dance" fps="24" loop="false" indices="2..3,0,1"/>
+	<anim name="idle-loop" anim="Dad idle dance" fps="24" loop="true" indices="3,3"/>
+	<anim name="singUP" anim="Dad Sing note UP" fps="24" loop="false"/>
+	<anim name="broken" anim="Dad idle dance" indices="a..b"/>
+	<anim name="absent" anim="Dad idle dance" indices="40..41"/>
+</character>"#;
+
+    const INDEXED_SHEET_XML: &str = r#"<TextureAtlas imagePath="dadSheet.png">
+	<SubTexture name="Dad idle dance0000" x="0" y="0" width="4" height="4"/>
+	<SubTexture name="Dad idle dance0001" x="4" y="0" width="4" height="4"/>
+	<SubTexture name="Dad idle dance0002" x="8" y="0" width="4" height="4"/>
+	<SubTexture name="Dad idle dance0003" x="12" y="0" width="4" height="4"/>
+	<SubTexture name="Dad Sing note UP0001" x="4" y="4" width="4" height="4"/>
+	<SubTexture name="Dad Sing note UP0000" x="0" y="4" width="4" height="4"/>
 </TextureAtlas>"#;
 
     #[test]
@@ -917,5 +997,82 @@ mod tests {
             "the refused sprite is reported: {:?}",
             content.warnings
         );
+    }
+
+    #[test]
+    fn indices_are_comma_separated_numbers_and_inclusive_ranges() {
+        assert_eq!(
+            parse_indices("2..12,0,1"),
+            Some(vec![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 0, 1]),
+            "the base game's dad idle"
+        );
+        assert_eq!(parse_indices("10..12,12"), Some(vec![10, 11, 12, 12]));
+        assert_eq!(parse_indices(" 56..59 "), Some(vec![56, 57, 58, 59]));
+        assert_eq!(parse_indices("3"), Some(vec![3]));
+        assert_eq!(parse_indices("1,,2"), Some(vec![1, 2]), "empty entries are skipped");
+
+        assert_eq!(parse_indices("5..2"), None, "descending ranges are rejected");
+        assert_eq!(parse_indices("a..b"), None);
+        assert_eq!(parse_indices("1,x"), None);
+        assert_eq!(parse_indices("0..4294967295"), None, "huge ranges are rejected");
+    }
+
+    #[test]
+    fn character_animations_follow_their_indices() {
+        let temp = TempDir::new("codename-indices").unwrap();
+        temp.write("mod/data/characters/dad.xml", INDEXED_XML)
+            .unwrap();
+        temp.write_bytes("mod/images/characters/dadSheet.png", &png(16, 16, [9, 9, 9, 255]))
+            .unwrap();
+        temp.write("mod/images/characters/dadSheet.xml", INDEXED_SHEET_XML)
+            .unwrap();
+        let assets = temp.join("assets");
+        let mod_root = temp.join("mod");
+
+        let content = CodenameContent::load(assets.as_path(), Some(mod_root.as_path()), None);
+        let dad = content
+            .characters
+            .get(&Role::Opponent)
+            .expect("the opponent loads");
+        let names = |animation: &str| -> Vec<&str> {
+            dad.animation(animation)
+                .unwrap_or_else(|| panic!("animation '{animation}' exists"))
+                .frames
+                .iter()
+                .map(|frame| frame.name.as_str())
+                .collect()
+        };
+
+        assert_eq!(
+            names("idle"),
+            [
+                "Dad idle dance0002",
+                "Dad idle dance0003",
+                "Dad idle dance0000",
+                "Dad idle dance0001"
+            ],
+            "indices choose the frames and their order"
+        );
+        let idle_loop = dad.animation("idle-loop").expect("idle-loop");
+        assert!(idle_loop.looping);
+        assert_eq!(
+            names("idle-loop"),
+            ["Dad idle dance0003", "Dad idle dance0003"],
+            "a repeated index repeats the frame"
+        );
+        assert_eq!(
+            names("singUP"),
+            ["Dad Sing note UP0000", "Dad Sing note UP0001"],
+            "without indices every prefixed frame plays in numeric order"
+        );
+        assert!(
+            dad.animation("broken").is_none(),
+            "a malformed indices attribute drops the animation instead of playing wrong frames"
+        );
+        assert!(
+            dad.animation("absent").is_none(),
+            "indices naming no frame leave nothing to play"
+        );
+        assert_eq!(dad.animations.len(), 3);
     }
 }
