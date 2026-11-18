@@ -21,7 +21,7 @@ pub mod texture;
 
 pub use asset::Asset;
 pub use atlas::{Animation, AtlasFrame, AtlasRect, SparrowAtlas, UvRect};
-pub use animate::{AnimateAtlas, AnimateQuad, AtlasError};
+pub use animate::{Affine, AnimateAtlas, AnimateLabel, AnimateQuad, AtlasError};
 pub use cache::{AssetCache, CanonicalKey, RequestKey};
 pub use default_pack::{
     install_default_pack, DefaultPack, DEFAULT_MANIFEST_JSON, DEFAULT_MANIFEST_PATH,
