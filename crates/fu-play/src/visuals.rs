@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use fu_assets::{AtlasFrame, TextureAsset};
+use fu_assets::{AnimateQuad, AtlasFrame, TextureAsset};
 use fu_render3d::camera::{Camera, Projection};
 use fu_render3d::material::{AlphaMode, Material, TextureData};
 use fu_render3d::mesh::{MeshData, Vertex};
@@ -95,6 +95,10 @@ const CHARACTER_SIZE: f32 = 2.5;
 const CHARACTER_FRAME_MS: f32 = 250.0;
 /// Codename's stage and character coordinates are pixels on a 1280x720 screen.
 const CODENAME_PIXELS_PER_UNIT: f32 = 60.0;
+/// Depth gap between consecutive sprites of one Animate frame, so later sprites
+/// draw in front of earlier ones. All of a character's sprites sit well inside
+/// the 0.02 gap between roles.
+const ANIMATE_QUAD_Z_STEP: f32 = 0.0002;
 /// The note skin's art is drawn smaller than its pixels: at 0.62 a stock note
 /// is about 1.6 world units wide on a 12-unit playfield, matching the game.
 const NOTE_SPRITE_SCALE: f32 = 0.62;
@@ -1500,33 +1504,49 @@ fn build_rig(
 
     let mut animations = BTreeMap::new();
     for (name, animation) in &rig.animations {
-        let mut frames = Vec::with_capacity(animation.frames.len());
-        for frame in &animation.frames {
-            let mesh = if rig.flip_x {
-                renderer
+        let mut frames = Vec::with_capacity(animation.frame_count());
+        if animation.pieces.is_empty() {
+            for frame in &animation.frames {
+                let mesh = if rig.flip_x {
+                    renderer
+                        .meshes
+                        .insert(mirrored_uv_quad_mesh(frame, &rig.texture)?)
+                } else {
+                    renderer.meshes.insert(uv_quad_mesh(frame, &rig.texture)?)
+                };
+                // Trimmed Sparrow frames store a smaller rect plus an offset from
+                // the original frame's top-left. `centre_offset` applies Sparrow's
+                // sign convention (the draw offset is -frameX/-frameY), so the art
+                // stays where the untrimmed source frame put it and the character
+                // does not jitter between frames.
+                let (shift_x, shift_y) = frame.centre_offset();
+                let offset = Vec2::new(
+                    shift_x / CODENAME_PIXELS_PER_UNIT,
+                    -shift_y / CODENAME_PIXELS_PER_UNIT,
+                );
+                frames.push(RigFrameVisual {
+                    mesh,
+                    offset,
+                    size: Vec2::new(
+                        frame.frame.width as f32 / CODENAME_PIXELS_PER_UNIT,
+                        frame.frame.height as f32 / CODENAME_PIXELS_PER_UNIT,
+                    ),
+                });
+            }
+        } else {
+            // An Animate frame is several sprites. They are merged into one mesh
+            // whose vertices are already placed relative to the symbol's origin,
+            // so the node keeps a unit size and no per-frame offset.
+            for quads in &animation.pieces {
+                let mesh = renderer
                     .meshes
-                    .insert(mirrored_uv_quad_mesh(frame, &rig.texture)?)
-            } else {
-                renderer.meshes.insert(uv_quad_mesh(frame, &rig.texture)?)
-            };
-            // Trimmed Sparrow frames store a smaller rect plus an offset from
-            // the original frame's top-left. `centre_offset` applies Sparrow's
-            // sign convention (the draw offset is -frameX/-frameY), so the art
-            // stays where the untrimmed source frame put it and the character
-            // does not jitter between frames.
-            let (shift_x, shift_y) = frame.centre_offset();
-            let offset = Vec2::new(
-                shift_x / CODENAME_PIXELS_PER_UNIT,
-                -shift_y / CODENAME_PIXELS_PER_UNIT,
-            );
-            frames.push(RigFrameVisual {
-                mesh,
-                offset,
-                size: Vec2::new(
-                    frame.frame.width as f32 / CODENAME_PIXELS_PER_UNIT,
-                    frame.frame.height as f32 / CODENAME_PIXELS_PER_UNIT,
-                ),
-            });
+                    .insert(animate_frame_mesh(quads, rig.flip_x, name)?);
+                frames.push(RigFrameVisual {
+                    mesh,
+                    offset: Vec2::ZERO,
+                    size: Vec2::ONE,
+                });
+            }
         }
         animations.insert(
             name.clone(),
@@ -1545,6 +1565,11 @@ fn build_rig(
     let first = animations
         .get("idle")
         .and_then(|animation| animation.frames.first())
+        .or_else(|| {
+            animations
+                .values()
+                .find_map(|animation| animation.frames.first())
+        })
         .map(|frame| frame.mesh)
         .unwrap_or(fallback_mesh);
     let z = match rig.role {
@@ -1555,14 +1580,32 @@ fn build_rig(
     // The playfield camera is fixed, while Codename's follows the player, so
     // very tall sprites are fitted to the visible stage and stand on a common
     // floor line. Their world position still decides left/right placement.
-    let idle_height = animations
-        .get("idle")
-        .and_then(|animation| animation.frames.first())
-        .map(|frame| frame.size.y)
-        .unwrap_or(6.0);
+    let bounds = rig_bounds(rig);
+    let idle_height = match bounds {
+        Some((_, min_y, _, max_y)) => (max_y - min_y) / CODENAME_PIXELS_PER_UNIT,
+        None => animations
+            .get("idle")
+            .and_then(|animation| animation.frames.first())
+            .map(|frame| frame.size.y)
+            .unwrap_or(6.0),
+    };
     let fit = (7.6 / f32::max(idle_height, 0.01)).min(1.0);
+    let scale = rig.scale.max(0.01) * fit;
     let x = ((rig.position.0 - 640.0) / CODENAME_PIXELS_PER_UNIT).clamp(-7.0, 7.0);
-    let origin = Vec3::new(x, -3.8 + idle_height * fit * 0.5, z);
+    let origin = match bounds {
+        // An Animate character's origin is the symbol's own, not its centre:
+        // stand its lowest point on the floor line and centre it on `x`.
+        Some((min_x, _, max_x, max_y)) => {
+            let centre = (min_x + max_x) * 0.5 / CODENAME_PIXELS_PER_UNIT;
+            let centre = if rig.flip_x { -centre } else { centre };
+            Vec3::new(
+                x - scale * centre,
+                -3.8 + scale * max_y / CODENAME_PIXELS_PER_UNIT,
+                z,
+            )
+        }
+        None => Vec3::new(x, -3.8 + idle_height * fit * 0.5, z),
+    };
     let node = spawn_quad(
         renderer,
         first,
@@ -1576,12 +1619,104 @@ fn build_rig(
         role: rig.role,
         node,
         origin,
-        scale: rig.scale.max(0.01) * fit,
+        scale,
         animations,
         current: String::new(),
         token: 0,
         started_ms: 0.0,
     })
+}
+
+/// Merges the sprites of one Animate frame into a single mesh.
+///
+/// Each sprite's four corners go through its transform, giving positions in
+/// pixels relative to the symbol's origin (y down), which become world units with
+/// y up. Sprites are listed back to front, so each gets a slightly larger z to
+/// draw over the previous one. A mirrored character negates x. The material is
+/// double sided, so transforms that flip a sprite do not hide it. A frame with no
+/// sprites becomes a degenerate triangle that draws nothing.
+fn animate_frame_mesh(
+    quads: &[AnimateQuad],
+    flip_x: bool,
+    animation: &str,
+) -> Result<MeshData, String> {
+    let mut vertices = Vec::with_capacity(quads.len() * 4);
+    let mut indices = Vec::with_capacity(quads.len() * 6);
+    for (order, quad) in quads.iter().enumerate() {
+        let (width, height) = (quad.rect.width as f32, quad.rect.height as f32);
+        let z = order as f32 * ANIMATE_QUAD_Z_STEP;
+        let base = vertices.len() as u32;
+        let corners = [
+            (0.0, 0.0, quad.uv.u0, quad.uv.v0),
+            (width, 0.0, quad.uv.u1, quad.uv.v0),
+            (width, height, quad.uv.u1, quad.uv.v1),
+            (0.0, height, quad.uv.u0, quad.uv.v1),
+        ];
+        for (px, py, u, v) in corners {
+            let (x, y) = quad.affine.apply(px, py);
+            let x = if flip_x { -x } else { x };
+            vertices.push(Vertex {
+                position: [
+                    x / CODENAME_PIXELS_PER_UNIT,
+                    -y / CODENAME_PIXELS_PER_UNIT,
+                    z,
+                ],
+                normal: [0.0, 0.0, 1.0],
+                uv: [u, v],
+            });
+        }
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+    if vertices.is_empty() {
+        for _ in 0..3 {
+            vertices.push(Vertex {
+                position: [0.0, 0.0, 0.0],
+                normal: [0.0, 0.0, 1.0],
+                uv: [0.0, 0.0],
+            });
+        }
+        indices.extend_from_slice(&[0, 1, 2]);
+    }
+    MeshData::new(format!("animate_{animation}"), vertices, indices)
+        .map_err(|error| format!("animate frame mesh for '{animation}': {error}"))
+}
+
+/// The pixel bounds `(min_x, min_y, max_x, max_y)` of the sprites of one Animate
+/// frame, relative to the symbol's origin with y down.
+fn pieces_bounds(quads: &[AnimateQuad]) -> Option<(f32, f32, f32, f32)> {
+    let mut bounds: Option<(f32, f32, f32, f32)> = None;
+    for quad in quads {
+        let (width, height) = (quad.rect.width as f32, quad.rect.height as f32);
+        for (px, py) in [(0.0, 0.0), (width, 0.0), (width, height), (0.0, height)] {
+            let (x, y) = quad.affine.apply(px, py);
+            bounds = Some(match bounds {
+                None => (x, y, x, y),
+                Some((min_x, min_y, max_x, max_y)) => {
+                    (min_x.min(x), min_y.min(y), max_x.max(x), max_y.max(y))
+                }
+            });
+        }
+    }
+    bounds
+}
+
+/// The bounds used to stand an Animate character on the floor: the first frame
+/// with any sprites of its `idle` animation, or of the first Animate animation
+/// when it has none. `None` for a Sparrow character.
+fn rig_bounds(rig: &CharacterRig) -> Option<(f32, f32, f32, f32)> {
+    let animation = rig
+        .animations
+        .get("idle")
+        .filter(|animation| !animation.pieces.is_empty())
+        .or_else(|| {
+            rig.animations
+                .values()
+                .find(|animation| !animation.pieces.is_empty())
+        })?;
+    animation
+        .pieces
+        .iter()
+        .find_map(|quads| pieces_bounds(quads))
 }
 
 /// Codename animation name for a lane: 0 left, 1 down, 2 up, 3 right.
@@ -2452,6 +2587,7 @@ mod tests {
                 fps: 100.0,
                 offset: (0.0, 0.0),
                 looping: true,
+                pieces: Vec::new(),
             },
         );
         animations.insert(
@@ -2465,6 +2601,7 @@ mod tests {
                 fps: 100.0,
                 offset: (0.0, 0.0),
                 looping: false,
+                pieces: Vec::new(),
             },
         );
         CharacterRig {
@@ -2514,5 +2651,139 @@ mod tests {
             shown[2], shown[3],
             "a finished non-looping pose holds its last frame"
         );
+    }
+
+    /// One Animate sprite: a 4x4 square from the 16x16 sheet's column at `x`,
+    /// placed by `affine`.
+    fn animate_quad(sprite: &str, x: u32, affine: fu_assets::Affine) -> AnimateQuad {
+        AnimateQuad {
+            sprite: sprite.to_string(),
+            rect: fu_assets::AtlasRect {
+                x,
+                y: 0,
+                width: 4,
+                height: 4,
+            },
+            uv: fu_assets::UvRect {
+                u0: x as f32 / 16.0,
+                v0: 0.0,
+                u1: (x + 4) as f32 / 16.0,
+                v1: 0.25,
+            },
+            affine,
+        }
+    }
+
+    fn moved(tx: f32, ty: f32) -> fu_assets::Affine {
+        fu_assets::Affine {
+            tx,
+            ty,
+            ..fu_assets::Affine::identity()
+        }
+    }
+
+    /// An Animate character: a two-frame looping idle at 100 fps. Frame 0 draws
+    /// two sprites side by side, frame 1 draws one.
+    fn animate_rig(role: Role) -> CharacterRig {
+        use crate::codename_content::RigAnimation;
+
+        let mut animations = BTreeMap::new();
+        animations.insert(
+            "idle".to_string(),
+            RigAnimation {
+                frames: Vec::new(),
+                fps: 100.0,
+                offset: (0.0, 0.0),
+                looping: true,
+                pieces: vec![
+                    vec![
+                        animate_quad("a", 0, moved(0.0, 0.0)),
+                        animate_quad("b", 4, moved(4.0, 0.0)),
+                    ],
+                    vec![animate_quad("c", 8, moved(0.0, 0.0))],
+                ],
+            },
+        );
+        CharacterRig {
+            role,
+            name: "animate".to_string(),
+            texture: TextureAsset::solid(16, 16, [255, 255, 255, 255]),
+            animations,
+            position: (640.0, 360.0),
+            scale: 1.0,
+            flip_x: false,
+            scroll: 1.0,
+            icon: None,
+        }
+    }
+
+    #[test]
+    fn the_bounds_of_an_animate_frame_follow_every_sprites_transform() {
+        assert_eq!(pieces_bounds(&[]), None);
+
+        let quads = [
+            animate_quad("a", 0, moved(0.0, 0.0)),
+            animate_quad("b", 4, moved(4.0, 10.0)),
+        ];
+        assert_eq!(pieces_bounds(&quads), Some((0.0, 0.0, 8.0, 14.0)));
+
+        // A uniform scale of 2 about the origin doubles the extent.
+        let scaled = [animate_quad(
+            "a",
+            0,
+            fu_assets::Affine {
+                a: 2.0,
+                d: 2.0,
+                ..fu_assets::Affine::identity()
+            },
+        )];
+        assert_eq!(pieces_bounds(&scaled), Some((0.0, 0.0, 8.0, 8.0)));
+    }
+
+    #[test]
+    fn an_empty_animate_frame_still_builds_a_mesh() {
+        assert!(animate_frame_mesh(&[], false, "empty").is_ok());
+        let quads = [animate_quad("a", 0, moved(0.0, 0.0))];
+        let mesh = animate_frame_mesh(&quads, true, "one").expect("mesh");
+        assert_eq!(mesh.indices().len(), 6, "one quad is two triangles");
+    }
+
+    #[test]
+    fn an_animate_rig_swaps_composed_frames_and_stands_on_the_floor() {
+        let resources = GameResources::defaults().expect("resources");
+        let mut renderer = Renderer3D::new(fu_render3d::quality::QualitySettings::preset(
+            fu_render3d::quality::QualityLevel::Low,
+            fu_render3d::quality::Platform::Desktop,
+        ))
+        .expect("renderer");
+        let mut content = CodenameContent::default();
+        content
+            .characters
+            .insert(Role::Girlfriend, animate_rig(Role::Girlfriend));
+        let mut visuals =
+            Visuals::with_codename(&mut renderer, &resources, &content).expect("visuals");
+        visuals.set_notes(&mut renderer, &chart()).expect("notes");
+        assert!(visuals.has_codename_content());
+
+        let game = Gameplay::new(chart());
+        // The girlfriend idles; the loop starts at the first update (1000 ms) and
+        // changes frame every 10 ms.
+        let mut shown = Vec::new();
+        for at in [1_000.0, 1_015.0, 1_025.0] {
+            visuals.update(&mut renderer, Screen::Playing, Some(&game), at, 16.0 / 9.0);
+            shown.push(node(&renderer, "character.girlfriend").mesh.expect("mesh"));
+        }
+        assert_ne!(shown[0], shown[1], "the idle loop advances to its second frame");
+        assert_eq!(shown[0], shown[2], "and wraps back to the first");
+
+        // Frame 0 spans x 0..8 and y 0..4 pixels, so the node stands that frame's
+        // lowest point on the floor line (-3.8) and centres it on the stage x.
+        let girlfriend = node(&renderer, "character.girlfriend");
+        let scale = girlfriend.transform.scale.x;
+        assert_eq!(scale, 1.0, "a small character is not shrunk");
+        let bottom = girlfriend.transform.translation.y - scale * 4.0 / CODENAME_PIXELS_PER_UNIT;
+        assert!((bottom + 3.8).abs() < 1e-4, "the feet are on the floor line: {bottom}");
+        let centre = girlfriend.transform.translation.x + scale * 4.0 / CODENAME_PIXELS_PER_UNIT;
+        assert!(centre.abs() < 1e-4, "the art is centred on the stage x: {centre}");
     }
 }
