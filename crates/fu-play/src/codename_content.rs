@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use fu_assets::{AtlasFrame, SparrowAtlas, TextureAsset};
-use fu_vfs::{CaseSensitivity, MountPolicy, Vfs};
+use fu_vfs::{CaseSensitivity, MountPolicy, Vfs, VfsError};
 
 use crate::resources::{keys, GameResources};
 
@@ -99,11 +99,14 @@ fn read_json(path: &Path) -> Option<serde_json::Value> {
 ///
 /// A directory that cannot be mounted (missing, or not a directory) is reported
 /// in the returned warnings and that layer is left out; nothing else on disk is
-/// consulted in its place.
+/// consulted in its place. An assets directory that mounts but holds neither
+/// `data/` nor `images/` (typically the installation root instead of its
+/// `assets` folder) is reported too, because every lookup would otherwise fail
+/// with nothing pointing at the cause.
 pub fn mount_codename(assets: &Path, mod_root: Option<&Path>) -> (Vfs, Vec<String>) {
     let mut vfs = Vfs::new();
     let mut warnings = Vec::new();
-    if let Err(error) = vfs.mount_physical(
+    match vfs.mount_physical(
         CODENAME_ASSETS_MOUNT,
         "/",
         assets,
@@ -111,10 +114,18 @@ pub fn mount_codename(assets: &Path, mod_root: Option<&Path>) -> (Vfs, Vec<Strin
         MountPolicy::ReadOnly,
         CaseSensitivity::Insensitive,
     ) {
-        warnings.push(format!(
+        Ok(_) => {
+            if !vfs.exists("/data") && !vfs.exists("/images") {
+                warnings.push(format!(
+                    "codename assets directory {} has no data/ or images/ folder; pass the installation's assets directory",
+                    assets.display()
+                ));
+            }
+        }
+        Err(error) => warnings.push(format!(
             "codename assets directory {}: {error}",
             assets.display()
-        ));
+        )),
     }
     if let Some(mod_root) = mod_root {
         if let Err(error) = vfs.mount_physical(
@@ -132,8 +143,21 @@ pub fn mount_codename(assets: &Path, mod_root: Option<&Path>) -> (Vfs, Vec<Strin
 }
 
 /// True when `relative` names an existing entry in `vfs`.
+///
+/// This is `false` both for an absent entry and for one the virtual file system
+/// refuses (a symlink leaving the mount, for example); use [`refusal_detail`] to
+/// tell them apart in a diagnostic.
 fn vfs_exists(vfs: &Vfs, relative: &str) -> bool {
     safe_relative(relative) && vfs.exists(format!("/{relative}"))
+}
+
+/// Why the virtual file system refused `relative`, as a parenthesised suffix for
+/// a "missing" diagnostic, or an empty string when the entry is simply absent.
+fn refusal_detail(vfs: &Vfs, relative: &str) -> String {
+    match vfs.metadata(format!("/{relative}")) {
+        Err(VfsError::NotFound(_)) | Ok(_) => String::new(),
+        Err(error) => format!(" ({error})"),
+    }
 }
 
 /// Reads `relative` (such as `images/game/ready.png`) from `vfs`.
@@ -421,7 +445,9 @@ impl NoteSkin {
 /// The virtual file system a [`CodenameContent`] was loaded from.
 ///
 /// It is kept so images requested after loading (health icons, countdown art,
-/// judgements) resolve through the same layers.
+/// judgements) resolve through the same layers. `Vfs` is `Send + Sync` (every
+/// mount holds an `Arc<dyn VfsBackend>` and the trait requires both), so the
+/// `Arc` is a plain shared handle.
 #[derive(Clone, Default)]
 struct ContentVfs(Option<Arc<Vfs>>);
 
@@ -553,8 +579,10 @@ impl CodenameContent {
     ) {
         let definition = format!("data/stages/{stage}.xml");
         if !vfs_exists(vfs, &definition) {
-            self.warnings
-                .push(format!("stage '{stage}' has no definition in data/stages"));
+            self.warnings.push(format!(
+                "stage '{stage}' has no definition in data/stages{}",
+                refusal_detail(vfs, &definition)
+            ));
             return;
         }
         let xml = match read_text(vfs, &definition) {
@@ -590,8 +618,10 @@ impl CodenameContent {
                     };
                     let relative = format!("images/{folder}{sprite}.png");
                     if !vfs_exists(vfs, &relative) {
-                        self.warnings
-                            .push(format!("stage '{stage}': missing image {relative}"));
+                        self.warnings.push(format!(
+                            "stage '{stage}': missing image {relative}{}",
+                            refusal_detail(vfs, &relative)
+                        ));
                         continue;
                     }
                     let texture = match read_texture(vfs, &relative) {
@@ -773,10 +803,13 @@ fn load_note_skin(vfs: &Vfs) -> Result<NoteSkin, String> {
     let image = "images/game/notes/default.png";
     let atlas_path = "images/game/notes/default.xml";
     if !vfs_exists(vfs, image) {
-        return Err(format!("missing {image}"));
+        return Err(format!("missing {image}{}", refusal_detail(vfs, image)));
     }
     if !vfs_exists(vfs, atlas_path) {
-        return Err(format!("missing {atlas_path}"));
+        return Err(format!(
+            "missing {atlas_path}{}",
+            refusal_detail(vfs, atlas_path)
+        ));
     }
     let texture = read_texture(vfs, image)?;
     let atlas_xml = read_text(vfs, atlas_path)?;
@@ -850,7 +883,10 @@ fn load_character(
 ) -> Result<CharacterRig, String> {
     let relative = format!("data/characters/{id}.xml");
     if !vfs_exists(vfs, &relative) {
-        return Err(format!("no definition at {relative}"));
+        return Err(format!(
+            "no definition at {relative}{}",
+            refusal_detail(vfs, &relative)
+        ));
     }
     let xml = read_text(vfs, &relative)?;
     let tag = first_tag(&xml, "character").ok_or("no <character> element")?;
@@ -951,7 +987,8 @@ fn load_character(
 ///
 /// This returns a host path for callers that want to read the file themselves,
 /// so it is the one lookup that still resolves against the host file system
-/// instead of the virtual one.
+/// instead of the virtual one. Unlike the virtual file system it matches names
+/// case-sensitively on case-sensitive hosts.
 pub fn song_meta_path(assets: &Path, mod_root: Option<&Path>, song_id: &str) -> Option<PathBuf> {
     let relative = format!("songs/{song_id}/meta.json");
     find_file(mod_root, assets, &relative)
@@ -1113,6 +1150,26 @@ mod tests {
     }
 
     #[test]
+    fn a_directory_that_is_not_an_assets_folder_is_flagged() {
+        let temp = TempDir::new("codename-wrong-dir").unwrap();
+        // The installation root: it mounts, but holds no data/ or images/.
+        temp.write("install/README.txt", "not the assets folder")
+            .unwrap();
+        temp.write("install/assets/images/a.txt", "inside").unwrap();
+        let install = temp.join("install");
+
+        let (_vfs, warnings) = mount_codename(install.as_path(), None);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains("no data/ or images/ folder"),
+            "{warnings:?}"
+        );
+
+        let (_vfs, warnings) = mount_codename(install.join("assets").as_path(), None);
+        assert!(warnings.is_empty(), "the real assets folder is accepted: {warnings:?}");
+    }
+
+    #[test]
     fn the_mod_layer_wins_and_the_install_is_the_fallback() {
         let temp = TempDir::new("codename-layers").unwrap();
         temp.write("assets/data/shared.xml", "base").unwrap();
@@ -1155,6 +1212,41 @@ mod tests {
         }
         assert!(read_bytes(&vfs, "images/missing.txt").is_err());
         assert!(read_texture(&vfs, "images/ok.txt").is_err(), "not a PNG");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_leaving_the_mount_is_refused_and_explained() {
+        let temp = TempDir::new("codename-symlink").unwrap();
+        temp.write(
+            "assets/data/stages/stage.xml",
+            r#"<stage name="stage" folder="stages/s/"><sprite name="link" sprite="link" x="0" y="0"/></stage>"#,
+        )
+        .unwrap();
+        temp.write("assets/images/stages/s/keep.txt", "keep").unwrap();
+        temp.write_bytes("outside.png", &png(4, 4, [255, 0, 0, 255]))
+            .unwrap();
+        std::os::unix::fs::symlink(
+            temp.join("outside.png"),
+            temp.join("assets/images/stages/s/link.png"),
+        )
+        .unwrap();
+        let assets = temp.join("assets");
+
+        let content = CodenameContent::load(assets.as_path(), None, None);
+
+        assert!(
+            content.stage_layers.is_empty(),
+            "an image outside the mount is never loaded"
+        );
+        assert!(
+            content.warnings.iter().any(|warning| {
+                warning.contains("missing image images/stages/s/link.png")
+                    && warning.contains("escaped mount root")
+            }),
+            "the refusal says why instead of a bare 'missing': {:?}",
+            content.warnings
+        );
     }
 
     #[test]
@@ -1243,6 +1335,21 @@ mod tests {
         assert_eq!(icon.pixel(0, 0), Some([200, 10, 10, 255]));
     }
 
+    /// A character that only names an icon, for exercising icon lookup.
+    fn icon_only_rig(icon: &str) -> CharacterRig {
+        CharacterRig {
+            role: Role::Opponent,
+            name: "dad".to_string(),
+            texture: TextureAsset::solid(1, 1, [0, 0, 0, 255]),
+            animations: BTreeMap::new(),
+            position: (0.0, 0.0),
+            scale: 1.0,
+            flip_x: false,
+            scroll: 1.0,
+            icon: Some(icon.to_string()),
+        }
+    }
+
     #[test]
     fn a_mod_icon_beats_the_installs_folder_layout_icon() {
         let temp = TempDir::new("codename-icon-priority").unwrap();
@@ -1267,32 +1374,29 @@ mod tests {
         content.apply_skin(&mut resources);
         let icon = resources.texture(keys::ICON_OPPONENT);
         assert_eq!((icon.width, icon.height), (7, 5), "the higher-priority layer wins");
+    }
 
-        // Without a mod icon, the install's folder layout is the fallback.
-        let content = CodenameContent::load(assets.as_path(), None, None);
+    #[test]
+    fn the_installs_folder_layout_icon_is_the_fallback() {
+        let temp = TempDir::new("codename-icon-fallback").unwrap();
+        temp.write_bytes(
+            "assets/images/icons/neu/icon.png",
+            &png(3, 3, [10, 200, 10, 255]),
+        )
+        .unwrap();
+        let assets = temp.join("assets");
+
+        let (vfs, warnings) = mount_codename(assets.as_path(), None);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let mut content = CodenameContent::load_from_vfs(Arc::new(vfs), None);
+        content
+            .characters
+            .insert(Role::Opponent, icon_only_rig("neu"));
+
         let mut resources = GameResources::defaults().expect("resources");
-        let mut installed = CodenameContent::load_from_vfs(
-            Arc::new(mount_codename(assets.as_path(), None).0),
-            None,
-        );
-        assert!(content.is_empty() || installed.characters.is_empty());
-        installed.characters.insert(
-            Role::Opponent,
-            CharacterRig {
-                role: Role::Opponent,
-                name: "dad".to_string(),
-                texture: TextureAsset::solid(1, 1, [0, 0, 0, 255]),
-                animations: BTreeMap::new(),
-                position: (0.0, 0.0),
-                scale: 1.0,
-                flip_x: false,
-                scroll: 1.0,
-                icon: Some("neu".to_string()),
-            },
-        );
-        installed.apply_skin(&mut resources);
+        content.apply_skin(&mut resources);
         let icon = resources.texture(keys::ICON_OPPONENT);
-        assert_eq!((icon.width, icon.height), (3, 3), "the install's icon is the fallback");
+        assert_eq!((icon.width, icon.height), (3, 3), "the install's icon is used");
     }
 
     #[test]
