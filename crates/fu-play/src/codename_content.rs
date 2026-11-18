@@ -2,7 +2,7 @@
 //!
 //! The playable runtime ships a generated default pack, so it runs with no
 //! Codename installation. When one is available (`--codename <assets dir>`), this
-//! module reads the stage and character XML plus their Sparrow atlases so the
+//! module reads the stage and character XML plus their sprite sheets so the
 //! playfield shows the game's own characters and backdrop instead of the
 //! generated placeholders.
 //!
@@ -13,9 +13,11 @@
 //! such as `/images/game/notes/default.png`. Nothing is copied out of the
 //! installation and nothing in it is ever written.
 //!
-//! Only what the playfield draws is read: stage sprite layers, character sprite
-//! sheets and their named animations. Scripts, Animate atlases and stage scripts
-//! are reported as warnings rather than silently ignored.
+//! Characters come in two sheet formats: a Sparrow PNG plus XML, and an Adobe
+//! Animate folder (`Animation.json`, `spritemap1.json`, `spritemap1.png`). Only
+//! what the playfield draws is read: stage sprite layers, character sprite
+//! sheets and their named animations. Scripts and stage scripts are reported as
+//! warnings rather than silently ignored.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -23,7 +25,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use fu_assets::{AtlasFrame, SparrowAtlas, TextureAsset};
+use fu_assets::{AnimateAtlas, AnimateQuad, AtlasFrame, SparrowAtlas, TextureAsset};
 use fu_vfs::{CaseSensitivity, MountPolicy, Vfs, VfsError};
 
 use crate::resources::{keys, GameResources};
@@ -319,10 +321,15 @@ impl Role {
     }
 }
 
-/// One named character animation, already resolved to atlas frames.
+/// One named character animation, already resolved to drawable frames.
+///
+/// A Sparrow character fills [`RigAnimation::frames`] (one atlas rectangle per
+/// frame). An Animate character fills [`RigAnimation::pieces`] instead: every
+/// frame is the list of sprites to draw, back to front. Exactly one of the two is
+/// non-empty.
 #[derive(Debug, Clone, Default)]
 pub struct RigAnimation {
-    /// Frames in playback order.
+    /// Sparrow frames in playback order.
     pub frames: Vec<AtlasFrame>,
     /// Animation framerate declared by the character XML.
     pub fps: f32,
@@ -330,6 +337,16 @@ pub struct RigAnimation {
     pub offset: (f32, f32),
     /// Whether the animation loops.
     pub looping: bool,
+    /// Animate frames in playback order: the sprites each frame draws, back to
+    /// front, in pixels relative to the Animate symbol's origin (y down).
+    pub pieces: Vec<Vec<AnimateQuad>>,
+}
+
+impl RigAnimation {
+    /// Number of frames, whichever sheet format they come from.
+    pub fn frame_count(&self) -> usize {
+        self.frames.len().max(self.pieces.len())
+    }
 }
 
 /// A character definition and the sprite sheet its frames live in.
@@ -364,8 +381,10 @@ impl CharacterRig {
             .map(|(_, animation)| animation)
     }
 
-    /// Frame of `name` for an absolute song time. Falls back to `idle` so a
-    /// missing sing pose does not blank the character.
+    /// Sparrow frame of `name` for an absolute song time. Falls back to `idle` so
+    /// a missing sing pose does not blank the character. Animate characters have
+    /// no atlas frames (see [`RigAnimation::pieces`]), so this returns `None` for
+    /// them.
     pub fn frame_at(&self, name: &str, song_ms: f32) -> Option<(String, &AtlasFrame)> {
         let animation = self
             .animation(name)
@@ -891,36 +910,65 @@ fn load_character(
     let xml = read_text(vfs, &relative)?;
     let tag = first_tag(&xml, "character").ok_or("no <character> element")?;
     let character_attributes = attributes(&tag);
+    // A character whose XML names no `sprite` uses a sheet named after itself:
+    // the base game's gf.xml has none and its sheet is images/characters/gf/.
     let sprite = character_attributes
         .get("sprite")
-        .ok_or("<character> has no sprite attribute")?
-        .clone();
+        .cloned()
+        .unwrap_or_else(|| id.to_string());
 
     // Codename looks character sheets up under images/characters; older
     // layouts keep them directly under images, so both are accepted.
-    let candidates = [
+    let sparrow = [
         format!("images/characters/{sprite}"),
         format!("images/{sprite}"),
-    ];
-    let (image, atlas_path) = candidates
-        .iter()
-        .find_map(|base| {
-            let image = format!("{base}.png");
-            let atlas = format!("{base}.xml");
-            (vfs_exists(vfs, &image) && vfs_exists(vfs, &atlas)).then_some((image, atlas))
-        })
-        .ok_or_else(|| {
-            format!(
-                "missing Sparrow sheet for sprite '{sprite}' (looked for images/characters/{sprite}.png and its .xml; Animate atlases are not supported)"
-            )
-        })?;
-    let texture = read_texture(vfs, &image)?;
-    let atlas_xml = read_text(vfs, &atlas_path)?;
+    ]
+    .iter()
+    .find_map(|base| {
+        let image = format!("{base}.png");
+        let atlas = format!("{base}.xml");
+        (vfs_exists(vfs, &image) && vfs_exists(vfs, &atlas)).then_some((image, atlas))
+    });
+    let (texture, animations) = match sparrow {
+        Some((image, atlas_path)) => load_sparrow_animations(vfs, &xml, &image, &atlas_path)?,
+        None => load_animate_animations(vfs, &xml, &sprite)?,
+    };
+
+    let (anchor_x, anchor_y) = anchor.unwrap_or_else(|| role.default_position());
+    Ok(CharacterRig {
+        role,
+        name: id.to_string(),
+        texture,
+        animations,
+        position: (
+            anchor_x + number(&character_attributes, "x", 0.0),
+            anchor_y + number(&character_attributes, "y", 0.0),
+        ),
+        scale: number(&character_attributes, "scale", 1.0),
+        icon: character_attributes.get("icon").cloned(),
+        flip_x: character_attributes
+            .get("flipx")
+            .map(|value| value.eq_ignore_ascii_case("true"))
+            .unwrap_or_else(|| role.default_flip()),
+        scroll: Role::default_scroll(role),
+    })
+}
+
+/// Reads a Sparrow sheet and the `<anim>` definitions that name frame prefixes
+/// in it.
+fn load_sparrow_animations(
+    vfs: &Vfs,
+    xml: &str,
+    image: &str,
+    atlas_path: &str,
+) -> Result<(TextureAsset, BTreeMap<String, RigAnimation>), String> {
+    let texture = read_texture(vfs, image)?;
+    let atlas_xml = read_text(vfs, atlas_path)?;
     let atlas =
         SparrowAtlas::parse_xml(&atlas_xml).map_err(|error| format!("{atlas_path}: {error}"))?;
 
     let mut animations = BTreeMap::new();
-    for element in elements(&xml) {
+    for element in elements(xml) {
         if element_name(&element) != "anim" {
             continue;
         }
@@ -958,28 +1006,145 @@ fn load_character(
                 looping: anim_attributes
                     .get("loop")
                     .is_some_and(|value| value.eq_ignore_ascii_case("true")),
+                pieces: Vec::new(),
+            },
+        );
+    }
+    Ok((texture, animations))
+}
+
+/// What an Animate `<anim>` plays: a symbol's timeline, or a span of the root
+/// timeline named by a frame label.
+enum AnimateSource {
+    Symbol,
+    Label { start: usize },
+}
+
+/// Reads an Adobe Animate character folder, `images/characters/<sprite>/`, and
+/// resolves each `<anim>` to the sprites of its frames.
+///
+/// An `<anim>`'s `anim` attribute names a symbol (the base game's gf uses
+/// `anim="GF Cheer"`) or, failing that, a label on the root timeline. `indices`
+/// picks frames of that timeline; numbers past its end are skipped, as Flixel's
+/// `addByIndices` skips missing frames. Without `indices` the whole timeline
+/// plays. `fps` defaults to the atlas's own frame rate.
+///
+/// When the XML defines `danceLeft` and `danceRight` but no `idle` (as gf does),
+/// an `idle` loop of the two in sequence is added so the character has a default
+/// pose. The real game alternates them on each beat; this plays them back to back
+/// at their own frame rate, which is not beat-synchronised.
+fn load_animate_animations(
+    vfs: &Vfs,
+    xml: &str,
+    sprite: &str,
+) -> Result<(TextureAsset, BTreeMap<String, RigAnimation>), String> {
+    let directory = format!("images/characters/{sprite}");
+    let animation_path = format!("{directory}/Animation.json");
+    let spritemap_path = format!("{directory}/spritemap1.json");
+    if !vfs_exists(vfs, &animation_path) {
+        return Err(format!(
+            "missing sheet for sprite '{sprite}' (looked for images/characters/{sprite}.png with its .xml, and {animation_path}){}",
+            refusal_detail(vfs, &animation_path)
+        ));
+    }
+    if !vfs_exists(vfs, &spritemap_path) {
+        return Err(format!(
+            "Animate atlas {directory} has no spritemap1.json{}",
+            refusal_detail(vfs, &spritemap_path)
+        ));
+    }
+    let atlas = AnimateAtlas::from_json(
+        &read_text(vfs, &animation_path)?,
+        &read_text(vfs, &spritemap_path)?,
+        &directory,
+    )
+    .map_err(|error| error.to_string())?;
+    let texture = read_texture(vfs, &format!("{directory}/{}", atlas.image_name))?;
+
+    let mut animations = BTreeMap::new();
+    for element in elements(xml) {
+        if element_name(&element) != "anim" {
+            continue;
+        }
+        let anim_attributes = attributes(&element);
+        let Some(name) = anim_attributes.get("name") else {
+            continue;
+        };
+        let target = anim_attributes
+            .get("anim")
+            .cloned()
+            .unwrap_or_else(|| name.clone());
+        let (source, length) = if atlas.has_symbol(&target) {
+            (
+                AnimateSource::Symbol,
+                atlas.symbol_length(&target).unwrap_or(0),
+            )
+        } else if let Some(label) = atlas.label(&target) {
+            (AnimateSource::Label { start: label.start }, label.length)
+        } else {
+            continue;
+        };
+        let numbers: Vec<usize> = match anim_attributes.get("indices") {
+            Some(indices) => parse_indices(indices)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|number| number as usize)
+                .filter(|number| *number < length)
+                .collect(),
+            None => (0..length).collect(),
+        };
+        let mut pieces = Vec::with_capacity(numbers.len());
+        for number in numbers {
+            let quads = match source {
+                AnimateSource::Symbol => atlas.symbol_quads(&target, number),
+                AnimateSource::Label { start } => atlas.root_quads(start + number),
+            }
+            .map_err(|error| format!("animation '{name}': {error}"))?;
+            pieces.push(quads);
+        }
+        if pieces.is_empty() {
+            continue;
+        }
+        animations.insert(
+            name.clone(),
+            RigAnimation {
+                frames: Vec::new(),
+                fps: number_attribute(&anim_attributes, "fps", atlas.frame_rate),
+                offset: (
+                    number_attribute(&anim_attributes, "x", 0.0),
+                    number_attribute(&anim_attributes, "y", 0.0),
+                ),
+                looping: anim_attributes
+                    .get("loop")
+                    .is_some_and(|value| value.eq_ignore_ascii_case("true")),
+                pieces,
             },
         );
     }
 
-    let (anchor_x, anchor_y) = anchor.unwrap_or_else(|| role.default_position());
-    Ok(CharacterRig {
-        role,
-        name: id.to_string(),
-        texture,
-        animations,
-        position: (
-            anchor_x + number(&character_attributes, "x", 0.0),
-            anchor_y + number(&character_attributes, "y", 0.0),
-        ),
-        scale: number(&character_attributes, "scale", 1.0),
-        icon: character_attributes.get("icon").cloned(),
-        flip_x: character_attributes
-            .get("flipx")
-            .map(|value| value.eq_ignore_ascii_case("true"))
-            .unwrap_or_else(|| role.default_flip()),
-        scroll: Role::default_scroll(role),
-    })
+    let idle = match (animations.get("danceLeft"), animations.get("danceRight")) {
+        (Some(left), Some(right)) if !animations.contains_key("idle") => {
+            let mut pieces = left.pieces.clone();
+            pieces.extend(right.pieces.iter().cloned());
+            Some(RigAnimation {
+                frames: Vec::new(),
+                fps: left.fps,
+                offset: left.offset,
+                looping: true,
+                pieces,
+            })
+        }
+        _ => None,
+    };
+    if let Some(idle) = idle {
+        animations.insert("idle".to_string(), idle);
+    }
+    Ok((texture, animations))
+}
+
+/// [`number`] under a name that does not clash with the loop variable above.
+fn number_attribute(map: &BTreeMap<String, String>, key: &str, default: f32) -> f32 {
+    number(map, key, default)
 }
 
 /// Song metadata path used by Codename: the mod's copy first, then the base
@@ -1043,6 +1208,42 @@ mod tests {
     const NOTE_SKIN_XML: &str = r#"<TextureAtlas imagePath="default.png">
 	<SubTexture name="purple0000" x="2" y="1" width="8" height="6"/>
 </TextureAtlas>"#;
+
+    /// The shape of the base game's gf.xml: no `sprite`, symbol names in `anim`,
+    /// `indices` ranges (one reaching past the symbol's end), a root label, a
+    /// per-animation `fps` and an `<anim>` naming nothing that exists.
+    const GF_XML: &str = r#"<!DOCTYPE codename-engine-character>
+<character x="100" y="275" centercam="false">
+	<anim name="danceLeft" anim="Dance" indices="0..1"/>
+	<anim name="danceRight" anim="Dance" indices="2..5"/>
+	<anim name="wave" anim="Wave" fps="12" loop="true"/>
+	<anim name="labelled" anim="Idle"/>
+	<anim name="missing" anim="Nothing"/>
+</character>"#;
+
+    /// Two sprites on a 64x32 sheet, in the real spritemap1.json layout.
+    const GF_SPRITEMAP: &str = r#"{"ATLAS":{"SPRITES":[
+{"SPRITE":{"name":"0","x":0,"y":0,"w":10,"h":20,"rotated":false}},
+{"SPRITE":{"name":"1","x":10,"y":0,"w":8,"h":8,"rotated":false}}]},
+"meta":{"app":"Adobe Animate","image":"spritemap1.png","format":"RGBA8888","size":{"w":64,"h":32},"resolution":"1"}}"#;
+
+    /// A root timeline with an `Idle` label and two symbols: `Dance` has four
+    /// one-frame keyframes alternating sprites "0" and "1", `Wave` has two.
+    const GF_ANIMATION: &str = r#"{"AN":{"SN":"Root","TL":{"L":[
+{"LN":"Labels","FR":[{"N":"Idle","I":0,"DU":2,"E":[]}]},
+{"LN":"Art","FR":[{"I":0,"DU":2,"E":[{"ASI":{"N":"0","MX":[1,0,0,1,0,0]}}]}]}
+]}},
+"SD":{"S":[
+{"SN":"Dance","TL":{"L":[{"LN":"L","FR":[
+ {"I":0,"DU":1,"E":[{"ASI":{"N":"0","MX":[1,0,0,1,0,0]}}]},
+ {"I":1,"DU":1,"E":[{"ASI":{"N":"1","MX":[1,0,0,1,0,0]}}]},
+ {"I":2,"DU":1,"E":[{"ASI":{"N":"0","MX":[1,0,0,1,0,0]}}]},
+ {"I":3,"DU":1,"E":[{"ASI":{"N":"1","MX":[1,0,0,1,0,0]}}]}]}]}},
+{"SN":"Wave","TL":{"L":[{"LN":"L","FR":[
+ {"I":0,"DU":1,"E":[{"ASI":{"N":"1","MX":[1,0,0,1,0,0]}}]},
+ {"I":1,"DU":1,"E":[{"ASI":{"N":"0","MX":[1,0,0,1,0,0]}}]}]}]}}
+]},
+"MD":{"FRT":24}}"#;
 
     #[test]
     fn relative_paths_cannot_leave_their_root() {
@@ -1272,6 +1473,7 @@ mod tests {
 
         let idle = dad.animation("idle").expect("idle");
         assert_eq!(idle.frames.len(), 2);
+        assert!(idle.pieces.is_empty(), "a Sparrow animation has no Animate pieces");
         assert!(idle.looping);
         assert_eq!(idle.fps, 12.0);
 
@@ -1310,6 +1512,126 @@ mod tests {
         assert!(content.characters.contains_key(&Role::Opponent));
         assert!(content.mod_root.is_none());
         assert_eq!(content.assets, assets);
+    }
+
+    #[test]
+    fn an_animate_character_loads_from_its_folder_through_the_vfs() {
+        let temp = TempDir::new("codename-animate").unwrap();
+        temp.write("assets/data/characters/gf.xml", GF_XML).unwrap();
+        temp.write("assets/images/characters/gf/Animation.json", GF_ANIMATION)
+            .unwrap();
+        temp.write("assets/images/characters/gf/spritemap1.json", GF_SPRITEMAP)
+            .unwrap();
+        temp.write_bytes(
+            "assets/images/characters/gf/spritemap1.png",
+            &png(64, 32, [7, 7, 7, 255]),
+        )
+        .unwrap();
+        let assets = temp.join("assets");
+
+        let content = CodenameContent::load(assets.as_path(), None, None);
+        let gf = content
+            .characters
+            .get(&Role::Girlfriend)
+            .unwrap_or_else(|| panic!("gf loads: {:?}", content.warnings));
+
+        assert_eq!(
+            (gf.texture.width, gf.texture.height),
+            (64, 32),
+            "the sheet named by spritemap1.json is the texture"
+        );
+        assert_eq!(
+            gf.position,
+            (500.0, 405.0),
+            "the stage's default gf anchor plus the XML offset"
+        );
+
+        let sprites = |animation: &str| -> Vec<&str> {
+            gf.animation(animation)
+                .unwrap_or_else(|| panic!("animation '{animation}' exists"))
+                .pieces
+                .iter()
+                .map(|quads| quads[0].sprite.as_str())
+                .collect()
+        };
+
+        let left = gf.animation("danceLeft").expect("danceLeft");
+        assert!(left.frames.is_empty(), "an Animate animation has no Sparrow frames");
+        assert_eq!(left.fps, 24.0, "the atlas frame rate is the default");
+        assert!(!left.looping);
+        assert_eq!(sprites("danceLeft"), ["0", "1"], "indices 0..1 of the symbol");
+        assert_eq!(
+            sprites("danceRight"),
+            ["0", "1"],
+            "indices 2..5 keep frames 2 and 3; 4 and 5 are past the symbol's end"
+        );
+
+        let wave = gf.animation("wave").expect("wave");
+        assert_eq!(wave.fps, 12.0);
+        assert!(wave.looping);
+        assert_eq!(sprites("wave"), ["1", "0"], "no indices plays the whole symbol");
+
+        assert_eq!(
+            sprites("labelled"),
+            ["0", "0"],
+            "an anim naming a root label plays that span of the root timeline"
+        );
+        assert!(
+            gf.animation("missing").is_none(),
+            "an anim naming no symbol or label is dropped"
+        );
+
+        let idle = gf.animation("idle").expect("idle is made from the dance pair");
+        assert!(idle.looping);
+        assert_eq!(idle.pieces.len(), 4, "danceLeft then danceRight");
+        assert_eq!(gf.animations.len(), 5);
+
+        let quad = &left.pieces[0][0];
+        assert_eq!(quad.rect.width, 10);
+        assert_eq!(quad.uv.u1, 10.0 / 64.0, "real UVs from the spritemap");
+    }
+
+    #[test]
+    fn an_animate_folder_without_a_spritemap_or_with_bad_json_is_reported() {
+        let temp = TempDir::new("codename-animate-broken").unwrap();
+        temp.write("assets/data/characters/gf.xml", GF_XML).unwrap();
+        temp.write("assets/images/characters/gf/Animation.json", GF_ANIMATION)
+            .unwrap();
+        let assets = temp.join("assets");
+        let content = CodenameContent::load(assets.as_path(), None, None);
+        assert!(!content.characters.contains_key(&Role::Girlfriend));
+        assert!(
+            content
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("no spritemap1.json")),
+            "{:?}",
+            content.warnings
+        );
+
+        temp.write("assets/images/characters/gf/spritemap1.json", "{ not json")
+            .unwrap();
+        let content = CodenameContent::load(assets.as_path(), None, None);
+        assert!(
+            content
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("invalid spritemap1.json")),
+            "{:?}",
+            content.warnings
+        );
+
+        let none = TempDir::new("codename-animate-none").unwrap();
+        none.write("assets/data/characters/gf.xml", GF_XML).unwrap();
+        let content = CodenameContent::load(none.join("assets").as_path(), None, None);
+        assert!(
+            content
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("images/characters/gf/Animation.json")),
+            "{:?}",
+            content.warnings
+        );
     }
 
     #[test]
