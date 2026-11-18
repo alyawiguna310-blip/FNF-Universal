@@ -53,10 +53,11 @@ winter horrorland, senpai, roses, thorns, guns, stress, ugh, test.
 * **Songs.** `meta.json` carries `displayName`, `bpm`, `icon`, `color`,
   `coopAllowed`, `opponentModeAllowed`. Charts are one JSON file per difficulty.
   Audio is `song/Inst.ogg` and `song/Voices.ogg`.
-* **Characters.** `data/characters/<id>.xml` names a `sprite`, an `icon`, a
-  `color`, optional `flipX`, `isPlayer`, `holdTime`, and `<anim>` children with
-  `name`, `anim` (a frame-name prefix, with spaces and mixed case), `x`, `y`,
-  `fps`, `loop` and `indices`.
+* **Characters.** `data/characters/<id>.xml` names a `sprite` (gf.xml names none;
+  its sheet folder is named after it), an `icon`, a `color`, optional `flipX`,
+  `isPlayer`, `holdTime`, and `<anim>` children with `name`, `anim` (a
+  frame-name prefix for Sparrow sheets, a symbol name for Animate sheets, with
+  spaces and mixed case), `x`, `y`, `fps`, `loop` and `indices`.
 * **Character art** is `images/characters/<sprite>.png` plus `.xml` (Sparrow),
   or a folder `images/characters/<sprite>/` holding `Animation.json`,
   `spritemap1.json` and `spritemap1.png` (Animate), or, for `spirit`, a `.txt`
@@ -68,6 +69,21 @@ winter horrorland, senpai, roses, thorns, guns, stress, ugh, test.
 * **Icons** are `images/icons/<name>/icon.png`. **Notes, receptors and
   judgements** are `images/game/notes/default.{png,xml}` and
   `images/game/score/*.png`. **Countdown** is `images/game/{ready,set,go}.png`.
+
+## The Animate format (verified from `images/characters/gf/`)
+
+* `spritemap1.json`: `ATLAS.SPRITES[].SPRITE` gives each sprite's `name`, `x`,
+  `y`, `w`, `h` and `rotated`; `meta` gives the image name and size.
+* `Animation.json`: `AN.TL.L` is the root timeline's layers (top layer first);
+  `SD.S` lists the symbols, each with its own `TL.L`; `MD.FRT` is the frame rate
+  (24). A layer's `FR` keyframes carry `I` (start), `DU` (duration), an optional
+  label `N` and `E` (elements). An element is `SI` (symbol instance: `SN`, `FF`,
+  `LP` = `LP`/`PO`/`SF`, matrix `MX` = `[a,b,c,d,tx,ty]`) or `ASI` (atlas sprite
+  instance: sprite name `N`, matrix `MX`).
+* gf's root timeline holds labels (`Idle`, `Up`, `Left`, ...), but gf.xml names
+  symbols (`GF Cheer`, `GF Up Note`, `GF Dancing Beat`) and selects frames of them
+  with `indices` (`danceLeft` is `0..14`, `danceRight` is `15..30`, one past the
+  symbol's end).
 
 ## How content is mounted
 
@@ -87,13 +103,16 @@ prefixes and backslashes in XML and metadata are refused before a lookup.
 
 ## What can be loaded today
 
+Nothing below has been run against the real installation; every row marked
+"loaded" is covered only by synthetic-fixture tests that have not been executed.
+
 | Need | Format | Status |
 | --- | --- | --- |
 | Note skin, receptors, sustains | Sparrow | Loaded through the VFS, except fractional `frameX` reads as 0 |
 | Judgement images, countdown | PNG | Loaded through the VFS |
 | Health icons | PNG | Loaded through the VFS in the base (`icons/<name>/icon.png`) and mod (`icons/<name>.png`) layouts; the sheet is drawn whole into a square (frame layout not inspected) |
 | Dad, Bopeebo opponent, `bf`, `mom`, `pico`, `spooky`, `monster`, `tankman`, `senpai` | Sparrow + XML | Loaded through the VFS. `indices` honoured; `-loop` follow-up animations, `holdTime`, `isPlayer` and Animate `pivotX/pivotY` are not used |
-| **`gf`, `gf-car`, `gf-christmas`, `gf-tankmen`** | Animate folder | **Not drawn.** `AnimateAtlas::parse` reads `Animation.json` only, uses placeholder UVs and a 512x512 sheet, and never reads `spritemap1.json` |
+| `gf`, `gf-car`, `gf-christmas`, `gf-tankmen` | Animate folder | Read through the VFS and drawn: `AnimateAtlas` reads both JSON files, each `<anim>` resolves to a symbol (or root label) with `indices`, and each frame is one merged mesh over the spritemap. Idle is made from `danceLeft` + `danceRight`; it is not beat-synchronised |
 | `spirit` | `.txt` atlas | Not supported |
 | Week 1 stage (`stage.xml`) | XML + PNG | Loaded through the VFS; `startCamPosX/Y` ignored |
 | Stages with `.hx` scripts | scripts | Layers load; scripts are never run |
@@ -101,16 +120,21 @@ prefixes and backslashes in XML and metadata are refused before a lookup.
 | Weeks | `week*.xml` | Not parsed |
 | Fonts, `alphabet.xml` | bitmap font XML | Not parsed; the HUD uses a built-in bitmap font |
 
+Animate support limits: rotated spritemap entries are an error, elements that
+are neither `SI` nor `ASI` are counted and skipped, and colour effects, filters,
+masks and the transformation point are not read. Placement is an approximation:
+the character's lowest point is stood on the stage floor line and its bounds are
+centred on the stage anchor, not placed by Codename's own camera rules, and a
+mirrored (`flipX`) Animate character is mirrored about the symbol origin.
+
 The one remaining host-path lookup is `song_meta_path`, which returns a `PathBuf`
 for callers that read the file themselves.
 
 ## Week 1 needs (the smallest playable slice)
 
 Songs `bopeebo`, `fresh`, `dadbattle`; characters `dad`, `bf`, `gf`; stage
-`stage`; the note skin, judgements and icons for `dad`, `bf`, `gf`.
-
-Everything except **`gf`** is loadable. `gf` is an Animate atlas, so Week 1 cannot
-show its spectator until the Animate renderer path exists.
+`stage`; the note skin, judgements and icons for `dad`, `bf`, `gf`. Every part is
+now implemented; none has been run on a real installation.
 
 ## Character animation facts (verified from `dad.xml` and its atlas)
 
@@ -130,8 +154,8 @@ show its spectator until the Animate renderer path exists.
 
 1. ~~Mount the Codename `assets` directory and the mod as `fu-vfs` layers and make
    `CodenameContent` read through it.~~ Done; see "How content is mounted".
-2. Animate atlas rendering (`spritemap1.json` rectangles, symbol timelines) so
-   `gf` shows.
-3. `-loop` follow-up animations and `holdTime`.
+2. ~~Animate atlas rendering so `gf` shows.~~ Implemented, not yet run.
+3. `-loop` follow-up animations and `holdTime`, and beat-synchronised
+   `danceLeft`/`danceRight`.
 4. Parse `weeks/*.xml` for the song list, shown through FNF-Universal's own menu.
 5. Fractional `frameX`/`frameY`.
