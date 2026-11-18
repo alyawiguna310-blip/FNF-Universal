@@ -802,8 +802,10 @@ mod tests {
 
     #[test]
     fn the_frame_rate_defaults_to_24() {
-        let without_metadata = ANIMATION.replace(r#","MD":{"FRT":30}"#, "");
-        let atlas = AnimateAtlas::from_json(&without_metadata, SPRITEMAP, "test").expect("atlas");
+        // The metadata block follows a newline, so match it without the comma.
+        let without_rate = ANIMATION.replace(r#""MD":{"FRT":30}"#, r#""MD":{}"#);
+        assert_ne!(without_rate, ANIMATION, "the fixture really changed");
+        let atlas = AnimateAtlas::from_json(&without_rate, SPRITEMAP, "test").expect("atlas");
         assert_eq!(atlas.frame_rate, 24.0);
     }
 
@@ -957,15 +959,21 @@ mod tests {
             r#""name":"1","x":10,"y":0,"w":8,"h":8,"rotated":false"#,
             r#""name":"1","x":10,"y":0,"w":8,"h":8,"rotated":true"#,
         );
+        assert_ne!(rotated, SPRITEMAP, "the fixture really changed");
         let error = AnimateAtlas::from_json(ANIMATION, &rotated, "test").unwrap_err();
         assert!(error.to_string().contains("rotated"), "{error}");
 
-        let unknown_sprite = ANIMATION.replace(r#""N":"1","MX":[1,0,0,1,0,0]"#, r#""N":"9","MX":[1,0,0,1,0,0]"#);
+        let unknown_sprite = ANIMATION.replace(
+            r#""N":"1","MX":[1,0,0,1,0,0]"#,
+            r#""N":"9","MX":[1,0,0,1,0,0]"#,
+        );
+        assert_ne!(unknown_sprite, ANIMATION, "the fixture really changed");
         let atlas = AnimateAtlas::from_json(&unknown_sprite, SPRITEMAP, "test").expect("atlas");
         let error = atlas.symbol_quads("Pose", 0).unwrap_err();
         assert!(error.to_string().contains("sprite '9'"), "{error}");
 
         let bad_matrix = ANIMATION.replace("[2,0,0,2,5,5]", "[2,0,0]");
+        assert_ne!(bad_matrix, ANIMATION, "the fixture really changed");
         let error = AnimateAtlas::from_json(&bad_matrix, SPRITEMAP, "test").unwrap_err();
         assert!(error.to_string().contains("MX"), "{error}");
 
