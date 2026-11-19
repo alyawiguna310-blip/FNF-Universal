@@ -209,7 +209,7 @@ impl AnimateAtlas {
         let animation = read_utf8(vfs, &json_path, &location)?;
 
         let directory = location.rsplit_once('/').map(|(dir, _)| dir).unwrap_or("");
-        let spritemap_path = VfsPath::new(format!("{directory}/{SPRITEMAP_FILE}"))
+        let spritemap_path = VfsPath::new(&format!("{directory}/{SPRITEMAP_FILE}"))
             .map_err(|e| AtlasError::new(&e.to_string(), location.clone(), None))?;
         let spritemap = read_utf8(vfs, &spritemap_path, &location)?;
 
