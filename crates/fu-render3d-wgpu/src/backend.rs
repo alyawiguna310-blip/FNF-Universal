@@ -58,6 +58,8 @@ pub struct PipelineKey {
     pub alpha_mode: AlphaMode,
     pub msaa_samples: u32,
     pub color_format: wgpu::TextureFormat,
+    /// Draw both faces of every triangle (no back-face culling).
+    pub double_sided: bool,
 }
 
 impl std::hash::Hash for PipelineKey {
@@ -71,6 +73,7 @@ impl std::hash::Hash for PipelineKey {
         }
         self.msaa_samples.hash(state);
         self.color_format.hash(state);
+        self.double_sided.hash(state);
     }
 }
 
@@ -81,6 +84,7 @@ impl PartialEq for PipelineKey {
             && self.alpha_mode == other.alpha_mode
             && self.msaa_samples == other.msaa_samples
             && self.color_format == other.color_format
+            && self.double_sided == other.double_sided
     }
 }
 
@@ -114,6 +118,17 @@ pub struct WgpuBackend {
 
     // External target override if rendering directly to a provided TextureView (e.g. from a window surface)
     pub target_view_override: Option<wgpu::TextureView>,
+
+    /// When set, a pass draws into this pixel rectangle `[x, y, width, height]`
+    /// of the target (origin top-left) by setting the viewport and the scissor
+    /// rectangle. The clear at the start of a pass still covers the whole target,
+    /// which is what paints the bars around a letterboxed region. The rectangle
+    /// must lie inside the target or the render fails.
+    pub render_region: Option<[u32; 4]>,
+    /// When true, the colour attachment keeps what an earlier pass drew instead
+    /// of being cleared, so a second pass can draw over the first. Depth is
+    /// always cleared, so each pass depth-tests only against itself.
+    pub preserve_color: bool,
 
     // Persistent uniform buffers & bind groups
     /// Persistent camera uniform buffer (UNIFORM | COPY_DST). Written each frame via queue.write_buffer.
@@ -355,6 +370,8 @@ impl WgpuBackend {
             current_depth_texture: None,
             current_msaa_texture: None,
             target_view_override: None,
+            render_region: None,
+            preserve_color: false,
             camera_uniform_buf,
             lighting_uniform_buf,
             camera_lighting_bind_group,
@@ -672,7 +689,11 @@ impl WgpuBackend {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     strip_index_format: None,
                     front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Back),
+                    cull_mode: if key.double_sided {
+                        None
+                    } else {
+                        Some(wgpu::Face::Back)
+                    },
                     polygon_mode: wgpu::PolygonMode::Fill,
                     unclipped_depth: false,
                     conservative: false,
@@ -716,6 +737,23 @@ impl RenderBackend for WgpuBackend {
         let height = frame.viewport.height;
         if width == 0 || height == 0 {
             return Ok(());
+        }
+
+        // A region that does not fit the target would be a wgpu validation error
+        // (a panic) deep inside the pass, so refuse it here with a clear reason.
+        if let Some([x, y, w, h]) = self.render_region {
+            let fits = w > 0
+                && h > 0
+                && x.checked_add(w).is_some_and(|right| right <= width)
+                && y.checked_add(h).is_some_and(|bottom| bottom <= height);
+            if !fits {
+                return Err(RenderError::Invalid {
+                    what: "render region",
+                    reason: format!(
+                        "region {w}x{h} at ({x}, {y}) does not fit the {width}x{height} target"
+                    ),
+                });
+            }
         }
 
         let msaa_samples = frame.quality.msaa_samples.max(1) as u32;
@@ -875,6 +913,7 @@ impl RenderBackend for WgpuBackend {
                 alpha_mode: mat.alpha_mode,
                 msaa_samples,
                 color_format: self.color_format,
+                double_sided: mat.double_sided,
             };
 
             let pipeline = self.get_or_compile_pipeline(pipeline_key, source_str)?;
@@ -926,6 +965,9 @@ impl RenderBackend for WgpuBackend {
             (target_view, None)
         };
 
+        let preserve_color = self.preserve_color;
+        let region = self.render_region;
+
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("3D Scene Pass"),
@@ -933,15 +975,21 @@ impl RenderBackend for WgpuBackend {
                     view: color_attachment,
                     resolve_target,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: match frame.composition {
-                                Composition::Scene3dOnly => 1.0,
-                                Composition::Scene3dUnder2d | Composition::Scene3dOver2d => 0.0,
-                            },
-                        }),
+                        load: if preserve_color {
+                            wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.0,
+                                g: 0.0,
+                                b: 0.0,
+                                a: match frame.composition {
+                                    Composition::Scene3dOnly => 1.0,
+                                    Composition::Scene3dUnder2d | Composition::Scene3dOver2d => {
+                                        0.0
+                                    }
+                                },
+                            })
+                        },
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -956,6 +1004,13 @@ impl RenderBackend for WgpuBackend {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+
+            // Draw into a sub-rectangle of the target when one was requested. The
+            // clear above has already covered the whole target.
+            if let Some([x, y, w, h]) = region {
+                render_pass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0.0, 1.0);
+                render_pass.set_scissor_rect(x, y, w, h);
+            }
 
             render_pass.set_bind_group(0, &self.camera_lighting_bind_group, &[]);
 
