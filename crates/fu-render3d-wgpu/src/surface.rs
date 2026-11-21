@@ -10,6 +10,24 @@ use fu_render3d::{RenderError, Result};
 
 use crate::backend::WgpuBackend;
 
+/// A rectangle of the window surface in physical pixels. The origin is the
+/// top-left corner and y grows downwards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PixelRegion {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// One draw of the scene inside [`WindowedRenderer::render_passes`]: the camera it
+/// is seen through and the layers it shows (`node.layer_mask & layer_mask != 0`).
+#[derive(Debug, Clone, Copy)]
+pub struct ScenePass<'a> {
+    pub camera: &'a Camera,
+    pub layer_mask: u32,
+}
+
 /// Selects an optimal surface format from the list of supported surface formats.
 ///
 /// If `prefer_srgb` is true, an sRGB format (e.g. `Bgra8UnormSrgb` or `Rgba8UnormSrgb`) is preferred.
@@ -223,18 +241,17 @@ impl WindowedRenderer {
         }
     }
 
-    /// Renders a frame from a [`Renderer3D`] and [`Camera`] to the window surface.
+    /// Acquires the surface texture to draw into.
     ///
-    /// Requirements satisfied:
-    /// - Suspends rendering when the window has zero width or height (returns `Ok(())`).
-    /// - Reconfigures on `Lost` or `Outdated` errors and retries once.
-    /// - Skips the frame safely on `Timeout`.
-    /// - Returns a clear fatal error on `OutOfMemory`.
-    pub fn render_frame(&mut self, renderer: &Renderer3D, camera: &Camera) -> Result<()> {
+    /// - Returns `Ok(None)` when rendering should be skipped: the window has zero
+    ///   width or height, or acquiring the texture timed out.
+    /// - Reconfigures the surface on `Lost` or `Outdated` and retries once.
+    /// - Returns a clear fatal error on `OutOfMemory` and on other surface errors.
+    fn acquire_frame(&mut self) -> Result<Option<wgpu::SurfaceTexture>> {
         let (w, h) = (self.width, self.height);
         if w == 0 || h == 0 {
             // Window is minimized or zero-sized; suspend rendering safely.
-            return Ok(());
+            return Ok(None);
         }
 
         if !self.configured {
@@ -253,7 +270,7 @@ impl WindowedRenderer {
                     .configure(&self.backend.device, &self.surface_config);
                 match self.surface.get_current_texture() {
                     Ok(tex) => tex,
-                    Err(wgpu::SurfaceError::Timeout) => return Ok(()),
+                    Err(wgpu::SurfaceError::Timeout) => return Ok(None),
                     Err(wgpu::SurfaceError::OutOfMemory) => {
                         return Err(RenderError::Backend(
                             "out of memory while acquiring surface texture".into(),
@@ -268,7 +285,7 @@ impl WindowedRenderer {
             }
             Err(wgpu::SurfaceError::Timeout) => {
                 // Skip frame safely
-                return Ok(());
+                return Ok(None);
             }
             Err(wgpu::SurfaceError::OutOfMemory) => {
                 return Err(RenderError::Backend(
@@ -279,6 +296,20 @@ impl WindowedRenderer {
                 return Err(RenderError::Backend(format!("surface error: {e}")));
             }
         };
+        Ok(Some(surface_texture))
+    }
+
+    /// Renders a frame from a [`Renderer3D`] and [`Camera`] to the window surface.
+    ///
+    /// Requirements satisfied:
+    /// - Suspends rendering when the window has zero width or height (returns `Ok(())`).
+    /// - Reconfigures on `Lost` or `Outdated` errors and retries once.
+    /// - Skips the frame safely on `Timeout`.
+    /// - Returns a clear fatal error on `OutOfMemory`.
+    pub fn render_frame(&mut self, renderer: &Renderer3D, camera: &Camera) -> Result<()> {
+        let Some(surface_texture) = self.acquire_frame()? else {
+            return Ok(());
+        };
 
         let view = surface_texture
             .texture
@@ -286,8 +317,8 @@ impl WindowedRenderer {
         self.backend.target_view_override = Some(view);
 
         let viewport = Viewport {
-            width: w,
-            height: h,
+            width: self.width,
+            height: self.height,
         };
 
         let render_result = renderer.render(camera, viewport, &mut self.backend);
@@ -295,6 +326,69 @@ impl WindowedRenderer {
         self.backend.target_view_override = None;
 
         render_result?;
+        surface_texture.present();
+        Ok(())
+    }
+
+    /// Renders several passes of one scene into a single frame.
+    ///
+    /// Each [`ScenePass`] draws the layers it asks for through its own camera. The
+    /// first pass clears the whole surface; every later pass draws over what the
+    /// earlier ones left (with its own depth buffer), so a world pass followed by a
+    /// screen-space pass keeps the second from being moved or zoomed by the first
+    /// camera.
+    ///
+    /// With a `region`, every pass draws only into that rectangle of the surface
+    /// and its projection takes the region's aspect ratio, while the rest of the
+    /// surface keeps the clear colour (letterbox or pillarbox bars). Without one,
+    /// the passes cover the whole surface at its own aspect ratio.
+    ///
+    /// Suspends rendering and recovers from surface errors like
+    /// [`WindowedRenderer::render_frame`]. Nothing is drawn or presented for an
+    /// empty `passes` slice.
+    pub fn render_passes(
+        &mut self,
+        renderer: &Renderer3D,
+        passes: &[ScenePass<'_>],
+        region: Option<PixelRegion>,
+    ) -> Result<()> {
+        if passes.is_empty() {
+            return Ok(());
+        }
+        let Some(surface_texture) = self.acquire_frame()? else {
+            return Ok(());
+        };
+
+        let view = surface_texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        self.backend.target_view_override = Some(view);
+
+        let target = Viewport {
+            width: self.width,
+            height: self.height,
+        };
+        let aspect = match region {
+            Some(region) if region.height > 0 => region.width as f32 / region.height as f32,
+            _ => target.aspect(),
+        };
+        self.backend.render_region = region.map(|r| [r.x, r.y, r.width, r.height]);
+
+        let mut result: Result<()> = Ok(());
+        for (index, pass) in passes.iter().enumerate() {
+            self.backend.preserve_color = index > 0;
+            result =
+                renderer.render_masked(pass.camera, target, aspect, pass.layer_mask, &mut self.backend);
+            if result.is_err() {
+                break;
+            }
+        }
+
+        self.backend.target_view_override = None;
+        self.backend.render_region = None;
+        self.backend.preserve_color = false;
+
+        result?;
         surface_texture.present();
         Ok(())
     }
